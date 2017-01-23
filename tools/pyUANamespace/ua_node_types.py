@@ -54,14 +54,8 @@ class opcua_referencePointer_t():
     self.__target__ = target
     self.__reference_type__ = None
     self.__isForward__ = True
-    self.__isHidden__ = hidden
     self.__parentNode__ = parentNode
     self.__addr__ = 0
-
-  def isHidden(self, data=None):
-    if isinstance(data, bool):
-      self.__isHidden__ = data
-    return self.__isHidden__
 
   def isForward(self, data=None):
     if isinstance(data, bool):
@@ -129,13 +123,8 @@ class opcua_referencePointer_t():
     else:
       retval=retval + "(?) "
 
-    if self.isForward() or self.isHidden():
-      retval = retval + " <"
-      if self.isForward():
-        retval = retval + "F"
-      if self.isHidden():
-        retval = retval + "H"
-      retval = retval + ">"
+    if self.isForward():
+      retval = retval + " <F>"
     return retval
 
   def __repr__(self):
@@ -241,6 +230,8 @@ class opcua_node_t:
   __node_namespace__      = None
   __node_references__     = []
   __node_referencedBy__   = []
+  __node_parent__         = None
+  __node_parentReference__= None
   __binary__              = ""
   __address__             = 0
 
@@ -255,6 +246,8 @@ class opcua_node_t:
     self.__node_userWriteMask__  = 0
     self.__node_references__     = []
     self.__node_referencedBy__   = []
+    self.__node_parent__         = None
+    self.__node_parentReference__= None
     self.__init_subType__()
     self.FLAG_ISABSTRACT       = 128
     self.FLAG_SYMMETRIC        = 64
@@ -350,35 +343,68 @@ class opcua_node_t:
         return True
     return False
 
-  def getFirstParentNode(self):
-    """ getFirstParentNode
-
-        return a tuple of (opcua_node_t, opcua_referencePointer_t) indicating
-        the first node found that references this node. If this node is not
-        referenced at all, None will be returned.
-
-        This function requires a linked namespace.
-
-        Note that there may be more than one nodes that reference this node.
-        The parent returned will be determined by the first isInverse()
-        Reference of this node found. If none exists, the first hidden
-        reference will be returned.
-    """
+  def getParent(self):
+    """  
     parent = None
     revref = None
 
-    for hiddenstatus in [False, True]:
-      for r in self.getReferences():
-        if r.isHidden() == hiddenstatus and r.isForward() == False:
-          parent = r.target()
-          for r in parent.getReferences():
-            if r.target() == self:
-              revref = r
-              break
-          if revref != None:
-            return (parent, revref)
+    for r in self.getReferences():
+      if r.isForward() == False:
+        parent = r.target()
+        for r in parent.getReferences():
+          if r.target() == self:
+            revref = r
+            break
+        if revref != None:
+          return (parent, revref)
+    return (parent, revref)  
+    """
+    """ getParentNode
 
-    return (parent, revref)
+       return a tuple of parent node and reference type (opcua_node_t, opcua_referencePointer_t)
+    """
+    return (self.__node_parent__, self.__node_parentReference__)
+  def updateParentNode(self, subTypeRefs):
+    """ determineParentNode
+    
+        returns a tuple of (opcua_node_t, opcua_referencePointer_t), like getParentNode,
+        but tries to determine them before
+        
+        Searches all inverse Reference till the correct parent node and Reference is found    
+    
+        This function requires a linked namespace.
+    """
+    # Check if not already determined during other node parent determination
+    if self.__node_parent__ == None or self.__node_parentReference__ == None:
+      #if it is an type node...
+      if (self.nodeClass() in [NODE_CLASS_REFERENCETYPE, NODE_CLASS_OBJECTTYPE, NODE_CLASS_VARIABLETYPE, NODE_CLASS_DATATYPE] and
+        not (self.id().ns== 0 and self.id().i in [24,58,2041,31,62])): #BaseDataType, BaseObjectType, Base...
+        logger.debug("Updating parent node for a type node("+str(self)+") with inverse references:\n\t"+str(self.getInverseReferences()))
+        #FIXME: Why does getInverseReferences() not work? Not totaly linked namespace?
+        for r in self.getReferences():
+          if r.isForward() == False and r.referenceType() in subTypeRefs and r.target() != None:
+            self.__node_parent__ = r.target()
+            break #TODO How to deal with multiple HasSupertype references, if possible?
+      else:
+        logger.debug("Updating parent node for a nontype node("+str(self)+") with inverse references:\n\t"+str(self.getInverseReferences()))
+        for r in self.getReferences():
+          if r.referenceType() != None and r.isForward() == False:
+            if r.referenceType().isHierarchical() == None:
+              r.referenceType().updateIsHierarchical(subTypeRefs)
+            if r.referenceType().isHierarchical() == True and r.target() != None:
+              self.__node_parent__ = r.target()
+              break
+      if self.__node_parent__ != None:
+        for r in self.__node_parent__.getReferences():
+          if r.target() == self:
+            self.__node_parentReference__ = r
+            logger.debug("Updating parent node of "+str(self)+": "+str(self.getParent()))
+            break
+      else:
+        logger.warn("Parent of node "+str(self)+" not found.")
+        
+    else:
+      logger.debug("Updating parent node of "+str(self)+", not necessary because already set.")
 
   def updateInverseReferences(self):
     """ Updates inverse references in all nodes referenced by this node.
@@ -508,7 +534,7 @@ class opcua_node_t:
     """
     # Do we have an id?
     if not isinstance(self.id(), opcua_node_id_t):
-      logger.error("HELP! I'm an id'less node!")
+      logger.error(str(self)+": HELP! I'm an id'less node!")
       return False
 
     # Remove unlinked references
@@ -545,7 +571,14 @@ class opcua_node_t:
       else:
         logger.debug("Removing unnecessary inverse reference to " + str(r.target.id()))
     self.__node_referencedBy__ = tmp
-
+    
+          
+    # Check parent and parent Reference
+    [parent, parentRef] = self.getParent()
+    if parent == None or parentRef == None or parentRef.referenceType() == None:
+      logger.error("Node with id "+str(self.id())+" has no parent or no correct parent reference and will be removed.")
+    #  return False
+      
     return self.sanitizeSubType()
 
   def sanitizeSubType(self):
@@ -662,8 +695,6 @@ class opcua_node_t:
     """
     codegen = open62541_MacroHelper(supressGenerationOfAttribute=supressGenerationOfAttribute)
     code = []
-    code.append("")
-    code.append("do {")
 
     # Just to be sure...
     if not (self in unPrintedNodes):
@@ -671,35 +702,54 @@ class opcua_node_t:
       return []
 
     # If we are being passed a parent node by the namespace, use that for registering ourselves in the namespace
-    # Note: getFirstParentNode will return [parentNode, referenceToChild]
-    (parentNode, parentRef) = self.getFirstParentNode()
-    if not (parentNode in unPrintedNodes) and (parentNode != None) and (parentRef.referenceType() != None):
+    # Note: getparentNode will return [parentNode, referenceToChild]
+    (parentNode, parentRef) = self.getParent()
+    if parentRef != None and parentRef.referenceType() != None and (parentRef.referenceType() in unPrintedNodes):
+      if parentRef.referenceType() != self:
+        logger.debug("Parent reference type node ("+str(parentRef.referenceType())+") of node ("+str(self)+") is unprinted. Print first.")
+        code = code + parentRef.referenceType().printOpen62541CCode(unPrintedNodes, unPrintedReferences, supressGenerationOfAttribute)
+      else:
+        logger.debug("Reference type node ("+str(self)+") has parent linked with own reference type:"+str(parentRef))
+        parentNode = None
+    if parentNode != None and (parentNode in unPrintedNodes):
+      logger.debug("Parent node ("+str(parentNode)+") of node ("+str(self)+") is unprinted. Print first.")
+      code = code + parentNode.printOpen62541CCode(unPrintedNodes, unPrintedReferences, supressGenerationOfAttribute)
+    
+    #Check if HasTypeDefinition is necessary --> print TypeNode first if not already printed
+    if ((self.nodeClass() == NODE_CLASS_OBJECT) or (self.nodeClass() == NODE_CLASS_VARIABLE)):
+      for r in self.getReferences():
+        if r.isForward() and r.referenceType().id().ns == 0 and r.referenceType().id().i == 40:
+          typeDefinition = r.target()
+      if typeDefinition != None and typeDefinition in unPrintedNodes:
+        logger.debug("Typedefinition node ("+str(typeDefinition)+") of node ("+str(self)+") is unprinted. Print first.")
+        code = code + typeDefinition.printOpen62541CCode(unPrintedNodes, unPrintedReferences, supressGenerationOfAttribute)
+        
+    code.append("")
+    code.append("do {")
+    if (parentNode != None) and (parentRef.referenceType() != None):
       code.append("// Referencing node found and declared as parent: " + str(parentNode .id()) + "/" +
-                  str(parentNode .__node_browseName__) + " using " + str(parentRef.referenceType().id()) +
+                  str(parentNode.__node_browseName__) + " using " + str(parentRef.referenceType().id()) +
                   "/" + str(parentRef.referenceType().__node_browseName__))
-      code = code + codegen.getCreateNodeNoBootstrap(self, parentNode, parentRef, unPrintedNodes)
+      code = code + codegen.getCreateNode(self, parentNode, parentRef, unPrintedNodes)
+    
       # Parent to child reference is added by the server, do not reprint that reference
       if parentRef in unPrintedReferences:
         unPrintedReferences.remove(parentRef)
+
       # the UA_Server_addNode function will use addReference which creates a bidirectional reference; remove any inverse
       # references to our parent to avoid duplicate refs
       for ref in self.getReferences():
         if ref.target() == parentNode and ref.referenceType() == parentRef.referenceType() and ref.isForward() == False:
           while ref in unPrintedReferences:
             unPrintedReferences.remove(ref)
-    # Otherwise use the "Bootstrapping" method and we will get registered with other nodes later.
     else:
-      code = code + self.printOpen62541CCode_SubtypeEarly(bootstrapping = True)
-      code = code + codegen.getCreateNodeBootstrap(self)
-      code = code + self.printOpen62541CCode_Subtype(unPrintedReferences = unPrintedReferences, bootstrapping = True)
-      code.append("// Parent node does not exist yet. This node will be bootstrapped and linked later.")
-      code.append("UA_RCU_LOCK();")
-      code.append("UA_NodestoreSwitch_insert(server->nodestoreSwitch, (UA_Node*) " + self.getCodePrintableID() + ", NULL,NULL);")
-      code.append("UA_RCU_UNLOCK();")
+      code.append("// Referencing node not found."+
+                  " Adding Node without parent and resolving parent reference (hopefully) later.")
+      logger.warn(str(self) + ' has no referencing ("parentNode") node. Trying to add with parentNodeId = UA_NODEID_NULL.')
+      code = code + codegen.getCreateNode(self, None, parentRef, unPrintedNodes)
+
 
     # Try to print all references to nodes that already exist
-    # Note: we know the reference types exist, because the namespace class made sure they were
-    #       the first ones being printed
     tmprefs = []
     for r in self.getReferences():
       #logger.debug("Checking if reference from " + str(r.parent()) + "can be created...")
@@ -745,6 +795,7 @@ class opcua_node_referenceType_t(opcua_node_t):
   __symmetric__     = False
   __reference_inverseName__   = ""
   __reference_referenceType__ = None
+  __reference_isHierarchical__= None
 
   def __init_subType__(self):
     self.nodeClass(NODE_CLASS_REFERENCETYPE)
@@ -752,6 +803,7 @@ class opcua_node_referenceType_t(opcua_node_t):
     self.__reference_symmetric__     = False
     self.__reference_inverseName__   = ""
     self.__reference_referenceType__ = None
+    self.__reference_isHierarchical__= None
 
   def referenceType(self,data=None):
     if isinstance(data, opcua_node_t):
@@ -772,7 +824,36 @@ class opcua_node_referenceType_t(opcua_node_t):
     if isinstance(data, str):
       self.__reference_inverseName__ = data
     return self.__reference_inverseName__
+ 
+  def isHierarchical(self,data=None):
+    if isinstance(data, bool):
+      self.__reference_isHierarchical__ = data
+    return self.__reference_isHierarchical__
 
+  def updateIsHierarchical(self, subTypeRefs):
+    #FIXME: Why does getInverseReferences() not work? Not totaly linked namespace? 
+    for r in self.getReferences():
+      if r.isForward() == False and r.referenceType() in subTypeRefs and r.target() != None:
+        # Break if Supertype is HierarchicalReferences(i=33)/NonHierarchicalReferences(i=32)
+        if r.target().id().ns == 0:
+          if r.target().id().i == 33:
+            self.isHierarchical(True)
+            break
+          elif r.target().id().i == 32:
+            self.isHierarchical(False)
+            break
+          elif r.target().id().i == 31 or r.target().id().i ==91:
+            #HierarchicalReferences(i=33)/NonHierarchicalReferences(i=32)/References nodes itself
+            if self.id().ns() == 0 and self.id().i == 33:
+              self.isHierarchical(True)
+            elif self.id().ns() == 0 and self.id().i == 32:
+                self.isHierarchical(False)
+        # If Supertye is not HierarchicalReferences(i=33)/NonHierarchicalReferences(i=32) browse up till found
+        if r.target().isHierarchical() == None:
+          r.target().updateIsHierarchical(subTypeRefs)
+        if r.target().isHierarchical() != None:
+          self.isHierarchical(r.target().isHierarchical())  
+          break 
   def sanitizeSubType(self):
     if not isinstance(self.referenceType(), opcua_referencePointer_t):
       logger.error("ReferenceType " + str(self.referenceType()) + " of " + str(self.id()) + " is not a pointer (ReferenceType is mandatory for references).")

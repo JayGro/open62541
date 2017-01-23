@@ -26,6 +26,7 @@ from ua_builtin_types import *;
 from ua_node_types import *;
 from ua_constants import *;
 from open62541_MacroHelper import open62541_MacroHelper
+from docutils.nodes import node_class_names
 
 
 logger = logging.getLogger(__name__)
@@ -528,6 +529,20 @@ class opcua_namespace():
 
     file.write("}\n")
     file.close()
+      
+  def determineParentNodes(self):
+    # Get all HasSubtype references. May HasSubtype reference be subtyped?
+    # FIXME: Why not just the HasSubtype, Non-/HierachicalReferences from base information model?
+    subTypeRefs = []
+    tn = self.getNodeByBrowseName("HasSubtype")
+    if tn != None:
+      subTypeRefs.append(tn)
+      subTypeRefs = subTypeRefs + self.getSubTypesOf(currentNode=tn)
+    if subTypeRefs == []:
+      logger.warn("No HasSubtype reference Found during determination of parent nodes for all nodes.")
+        
+    for node in self.nodes:
+      node.updateParentNode(subTypeRefs)
 
   def __reorder_getMinWeightNode__(self, nmatrix):
     rcind = -1
@@ -618,8 +633,9 @@ class opcua_namespace():
     header = []
 
     # Reorder our nodes to produce a bare minimum of bootstrapping dependencies
-    logger.debug("Reordering nodes for minimal dependencies during printing.")
-    self.reorderNodesMinDependencies()
+    #TODO add as optional parameter to parser?
+    #logger.debug("Reordering nodes for minimal dependencies during printing.")
+    #self.reorderNodesMinDependencies()
 
     # Some macros (UA_EXPANDEDNODEID_MACRO()...) are easily created, but
     # bulky. This class will help to offload some code.
@@ -711,7 +727,7 @@ class opcua_namespace():
     # Find all references necessary to create the namespace and
     # "Bootstrap" them so all other nodes can safely use these referencetypes whenever
     # they can locate both source and target of the reference.
-    logger.debug("Collecting all references used in the namespace.")
+    logger.debug("Printing all references used in the namespace first.")
     refsUsed = []
     for n in self.nodes:
       # Since we are already looping over all nodes, use this chance to print NodeId defines
@@ -719,7 +735,9 @@ class opcua_namespace():
         nc = n.nodeClass()
         if nc != NODE_CLASS_OBJECT and nc != NODE_CLASS_VARIABLE and nc != NODE_CLASS_VIEW:
           header = header + codegen.getNodeIdDefineString(n)
-
+      if(n.nodeClass() == NODE_CLASS_REFERENCETYPE):
+        code = code + n.printOpen62541CCode(unPrintedNodes, unPrintedRefs, supressGenerationOfAttribute=supressGenerationOfAttribute)
+    """
       # Now for the actual references...
       for r in n.getReferences():
         # Only print valid references in namespace 0 (users will not want their refs bootstrapped)

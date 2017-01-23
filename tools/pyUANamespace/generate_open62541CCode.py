@@ -131,6 +131,12 @@ for blacklist in args.blacklistFiles:
 logger.info("Linking namespace nodes and references")
 ns.linkOpenPointers()
 
+# Make sure that the node has a parent with a hierarchical reference (otherwise it can not
+# be added with the add node service)
+# During check: For every reference type node, check whether it is hierarchical or not and save in node
+logger.info("Determine parent nodes")
+ns.determineParentNodes()
+
 # Remove nodes that are not printable or contain parsing errors, such as
 # unresolvable or no references or invalid NodeIDs
 ns.sanitize()

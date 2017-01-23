@@ -454,15 +454,23 @@ Service_AddNodes_existing(UA_Server *server, UA_Session *session, UA_Node *node,
         return UA_STATUSCODE_BADNODEIDINVALID;
     }
 
-    /* Check the reference to the parent */
-    UA_StatusCode retval = checkParentReference(server, session, node->nodeClass,
-                                                parentNodeId, referenceTypeId);
-    if(retval != UA_STATUSCODE_GOOD) {
-        UA_LOG_DEBUG_SESSION(server->config.logger, session,
-                             "AddNodes: Checking the reference to the parent returned"
-                             "error code %s", UA_StatusCode_name(retval));
-        UA_NodestoreSwitch_deleteNode(server, node);
-        return retval;
+    /* Check the reference to the parent, if it is given*/
+    UA_StatusCode retval = UA_STATUSCODE_GOOD;
+    //check if session = admin Session --> Allow insert without parent
+    if(session == &adminSession && parentNodeId && UA_NodeId_equal(parentNodeId, &UA_NODEID_NULL)){
+        parentNodeId = NULL;
+    }
+    //Check if it is necessary to check the parent node id
+    if(parentNodeId && !UA_NodeId_equal(&node->nodeId,referenceTypeId)){
+        retval = checkParentReference(server, session, node->nodeClass,
+                                                    parentNodeId, referenceTypeId);
+        if(retval != UA_STATUSCODE_GOOD) {
+            UA_LOG_DEBUG_SESSION(server->config.logger, session,
+                                 "AddNodes: Checking the reference to the parent returned "
+                                 "error code %s", UA_StatusCode_name(retval));
+            UA_NodestoreSwitch_deleteNode(server, node);
+            return retval;
+        }
     }
 
     /* Add the node to the nodestore */
@@ -486,19 +494,21 @@ Service_AddNodes_existing(UA_Server *server, UA_Session *session, UA_Node *node,
         }
     }
 
-    /* Hierarchical reference back to the parent */
-    UA_AddReferencesItem item;
-    UA_AddReferencesItem_init(&item);
-    item.sourceNodeId = newNodeId;
-    item.referenceTypeId = *referenceTypeId;
-    item.isForward = false;
-    item.targetNodeId.nodeId = *parentNodeId;
-    retval = Service_AddReferences_single(server, session, &item);
-    if(retval != UA_STATUSCODE_GOOD) {
-        UA_LOG_DEBUG_SESSION(server->config.logger, session,
-                             "AddNodes: Could not add the reference to the parent "
-                             "with error code %s", UA_StatusCode_name(retval));
-        goto remove_node;
+    if(parentNodeId){
+        /* Hierarchical reference back to the parent */
+        UA_AddReferencesItem item;
+        UA_AddReferencesItem_init(&item);
+        item.sourceNodeId = newNodeId;
+        item.referenceTypeId = *referenceTypeId;
+        item.isForward = false;
+        item.targetNodeId.nodeId = *parentNodeId;
+        retval = Service_AddReferences_single(server, session, &item);
+        if(retval != UA_STATUSCODE_GOOD) {
+            UA_LOG_DEBUG_SESSION(server->config.logger, session,
+                                 "AddNodes: Could not add the reference to the parent "
+                                 "with error code %s", UA_StatusCode_name(retval));
+            goto remove_node;
+        }
     }
 
     if(nodeClass == UA_NODECLASS_VARIABLE ||
