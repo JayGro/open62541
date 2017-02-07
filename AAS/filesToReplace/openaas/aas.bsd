@@ -1,0 +1,57 @@
+<opc:TypeDictionary xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:tns="http://openAAS.org/AAS/" DefaultByteOrder="LittleEndian" xmlns:opc="http://opcfoundation.org/BinarySchema/" xmlns:ua="http://opcfoundation.org/UA/" TargetNamespace="http://openAAS.org/AAS/">
+    <opc:Import Namespace="http://opcfoundation.org/UA/"/>
+    <opc:StructuredType BaseType="ua:ExtensionObject" Name="Identification">
+        <opc:Field TypeName="opc:CharArray" Name="IdSpec"/>
+        <opc:Field TypeName="tns:IdEnum" Name="IdType"/>
+    </opc:StructuredType>
+    <opc:StructuredType BaseType="ua:ExtensionObject" Name="LifeCycleEntry">
+        <opc:Field TypeName="tns:Identification" Name="CreatingInstance"/>
+        <opc:Field TypeName="tns:Identification" Name="WritingInstance"/>
+        <opc:Field TypeName="ua:DataValue" Name="Data"/>
+        <opc:Field TypeName="opc:CharArray" Name="Subject"/>
+        <opc:Field TypeName="opc:CharArray" Name="EventClass"/>
+    </opc:StructuredType>
+    <opc:StructuredType BaseType="ua:ExtensionObject" Name="PropertyValueStatement">
+        <opc:Field TypeName="tns:ExpressionSemanticEnum" Name="ExpressionSemantic"/>
+        <opc:Field TypeName="tns:ExpressionLogicEnum" Name="ExpressionLogic"/>
+        <opc:Field TypeName="opc:CharArray" Name="Unit of Measure"/>
+        <opc:Field TypeName="ua:DataValue" Name="Value"/>
+        <opc:Field TypeName="tns:Identification" Name="ID"/>
+        <opc:Field TypeName="tns:ViewEnum" Name="View"/>
+        <opc:Field TypeName="tns:VisibilityEnum" Name="Visibility"/>
+    </opc:StructuredType>
+    <opc:EnumeratedType LengthInBits="32" Name="ExpressionSemanticEnum">
+        <opc:EnumeratedValue Name="CONFIRMATION" Value="0"/>
+        <opc:EnumeratedValue Name="SETTING" Value="1"/>
+        <opc:EnumeratedValue Name="MEASUREMENT" Value="2"/>
+        <opc:EnumeratedValue Name="REQUIREMENT" Value="3"/>
+    </opc:EnumeratedType>
+    <opc:EnumeratedType LengthInBits="32" Name="IdEnum">
+        <opc:EnumeratedValue Name="URI" Value="0"/>
+        <opc:EnumeratedValue Name="ISO" Value="1"/>
+    </opc:EnumeratedType>
+    <opc:EnumeratedType LengthInBits="32" Name="ExpressionLogicEnum">
+        <opc:EnumeratedValue Name="GREATER_THAN" Value="0"/>
+        <opc:EnumeratedValue Name="GREATER_EQUAL" Value="1"/>
+        <opc:EnumeratedValue Name="EQUAL" Value="2"/>
+        <opc:EnumeratedValue Name="NOT_EQUAL" Value="3"/>
+        <opc:EnumeratedValue Name="LESS_EQUAL" Value="4"/>
+        <opc:EnumeratedValue Name="LESS_THAN" Value="5"/>
+    </opc:EnumeratedType>
+    <opc:EnumeratedType LengthInBits="32" Name="ViewEnum">
+        <opc:EnumeratedValue Name="BUSINESS" Value="0"/>
+        <opc:EnumeratedValue Name="CONSTRUCTION" Value="1"/>
+        <opc:EnumeratedValue Name="POWER" Value="2"/>
+        <opc:EnumeratedValue Name="FUNCTIONAL" Value="3"/>
+        <opc:EnumeratedValue Name="LOCATION" Value="4"/>
+        <opc:EnumeratedValue Name="SECURITY" Value="5"/>
+        <opc:EnumeratedValue Name="NETWORK" Value="6"/>
+        <opc:EnumeratedValue Name="LIFECYCLE" Value="7"/>
+        <opc:EnumeratedValue Name="HUMAN" Value="8"/>
+    </opc:EnumeratedType>
+    <opc:EnumeratedType LengthInBits="32" Name="VisibilityEnum">
+        <opc:EnumeratedValue Name="PRIVAT" Value="0"/>
+        <opc:EnumeratedValue Name="CONTRACT" Value="1"/>
+        <opc:EnumeratedValue Name="PUBLIC" Value="2"/>
+    </opc:EnumeratedType>
+</opc:TypeDictionary>

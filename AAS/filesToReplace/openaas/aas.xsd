@@ -1,0 +1,129 @@
+<xs:schema elementFormDefault="qualified" targetNamespace="http://openAAS.org/AAS/Types.xsd" xmlns:tns="http://openAAS.org/AAS/Types.xsd" xmlns:ua="http://opcfoundation.org/UA/2008/02/Types.xsd" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:import namespace="http://opcfoundation.org/UA/2008/02/Types.xsd"/>
+    <xs:simpleType name="ExpressionSemanticEnum">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="CONFIRMATION_0"/>
+            <xs:enumeration value="SETTING_1"/>
+            <xs:enumeration value="MEASUREMENT_2"/>
+            <xs:enumeration value="REQUIREMENT_3"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:element type="tns:ExpressionSemanticEnum" name="ExpressionSemanticEnum"/>
+    <xs:complexType name="ListOfExpressionSemanticEnum">
+        <xs:sequence>
+            <xs:element minOccurs="0" maxOccurs="unbounded" type="tns:ExpressionSemanticEnum" name="ExpressionSemanticEnum" nillable="true"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:element type="tns:ListOfExpressionSemanticEnum" name="ListOfExpressionSemanticEnum" nillable="true"/>
+    <xs:simpleType name="IdEnum">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="URI_0"/>
+            <xs:enumeration value="ISO_1"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:element type="tns:IdEnum" name="IdEnum"/>
+    <xs:complexType name="ListOfIdEnum">
+        <xs:sequence>
+            <xs:element minOccurs="0" maxOccurs="unbounded" type="tns:IdEnum" name="IdEnum" nillable="true"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:element type="tns:ListOfIdEnum" name="ListOfIdEnum" nillable="true"/>
+    <xs:simpleType name="ExpressionLogicEnum">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="GREATER_THAN_0"/>
+            <xs:enumeration value="GREATER_EQUAL_1"/>
+            <xs:enumeration value="EQUAL_2"/>
+            <xs:enumeration value="NOT_EQUAL_3"/>
+            <xs:enumeration value="LESS_EQUAL_4"/>
+            <xs:enumeration value="LESS_THAN_5"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:element type="tns:ExpressionLogicEnum" name="ExpressionLogicEnum"/>
+    <xs:complexType name="ListOfExpressionLogicEnum">
+        <xs:sequence>
+            <xs:element minOccurs="0" maxOccurs="unbounded" type="tns:ExpressionLogicEnum" name="ExpressionLogicEnum" nillable="true"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:element type="tns:ListOfExpressionLogicEnum" name="ListOfExpressionLogicEnum" nillable="true"/>
+    <xs:simpleType name="ViewEnum">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="BUSINESS_0"/>
+            <xs:enumeration value="CONSTRUCTION_1"/>
+            <xs:enumeration value="POWER_2"/>
+            <xs:enumeration value="FUNCTIONAL_3"/>
+            <xs:enumeration value="LOCATION_4"/>
+            <xs:enumeration value="SECURITY_5"/>
+            <xs:enumeration value="NETWORK_6"/>
+            <xs:enumeration value="LIFECYCLE_7"/>
+            <xs:enumeration value="HUMAN_8"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:element type="tns:ViewEnum" name="ViewEnum"/>
+    <xs:complexType name="ListOfViewEnum">
+        <xs:sequence>
+            <xs:element minOccurs="0" maxOccurs="unbounded" type="tns:ViewEnum" name="ViewEnum" nillable="true"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:element type="tns:ListOfViewEnum" name="ListOfViewEnum" nillable="true"/>
+    <xs:simpleType name="VisibilityEnum">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="PRIVAT_0"/>
+            <xs:enumeration value="CONTRACT_1"/>
+            <xs:enumeration value="PUBLIC_2"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:element type="tns:VisibilityEnum" name="VisibilityEnum"/>
+    <xs:complexType name="ListOfVisibilityEnum">
+        <xs:sequence>
+            <xs:element minOccurs="0" maxOccurs="unbounded" type="tns:VisibilityEnum" name="VisibilityEnum" nillable="true"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:element type="tns:ListOfVisibilityEnum" name="ListOfVisibilityEnum" nillable="true"/>
+    <xs:complexType name="Identification">
+        <xs:sequence>
+            <xs:element minOccurs="0" maxOccurs="1" type="xs:string" name="IdSpec"/>
+            <xs:element minOccurs="0" maxOccurs="1" type="tns:IdEnum" name="IdType"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:element type="tns:Identification" name="Identification"/>
+    <xs:complexType name="ListOfIdentification">
+        <xs:sequence>
+            <xs:element minOccurs="0" maxOccurs="unbounded" type="tns:Identification" name="Identification" nillable="true"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:element type="tns:ListOfIdentification" name="ListOfIdentification" nillable="true"/>
+    <xs:complexType name="LifeCycleEntry">
+        <xs:sequence>
+            <xs:element minOccurs="0" maxOccurs="1" type="tns:Identification" name="CreatingInstance"/>
+            <xs:element minOccurs="0" maxOccurs="1" type="tns:Identification" name="WritingInstance"/>
+            <xs:element minOccurs="0" maxOccurs="1" type="ua:DataValue" name="Data"/>
+            <xs:element minOccurs="0" maxOccurs="1" type="xs:string" name="Subject"/>
+            <xs:element minOccurs="0" maxOccurs="1" type="xs:string" name="EventClass"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:element type="tns:LifeCycleEntry" name="LifeCycleEntry"/>
+    <xs:complexType name="ListOfLifeCycleEntry">
+        <xs:sequence>
+            <xs:element minOccurs="0" maxOccurs="unbounded" type="tns:LifeCycleEntry" name="LifeCycleEntry" nillable="true"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:element type="tns:ListOfLifeCycleEntry" name="ListOfLifeCycleEntry" nillable="true"/>
+    <xs:complexType name="PropertyValueStatement">
+        <xs:sequence>
+            <xs:element minOccurs="0" maxOccurs="1" type="tns:ExpressionSemanticEnum" name="ExpressionSemantic"/>
+            <xs:element minOccurs="0" maxOccurs="1" type="tns:ExpressionLogicEnum" name="ExpressionLogic"/>
+            <xs:element minOccurs="0" maxOccurs="1" type="xs:string" name="Unit of Measure"/>
+            <xs:element minOccurs="0" maxOccurs="1" type="ua:DataValue" name="Value"/>
+            <xs:element minOccurs="0" maxOccurs="1" type="tns:Identification" name="ID"/>
+            <xs:element minOccurs="0" maxOccurs="1" type="tns:ViewEnum" name="View"/>
+            <xs:element minOccurs="0" maxOccurs="1" type="tns:VisibilityEnum" name="Visibility"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:element type="tns:PropertyValueStatement" name="PropertyValueStatement"/>
+    <xs:complexType name="ListOfPropertyValueStatement">
+        <xs:sequence>
+            <xs:element minOccurs="0" maxOccurs="unbounded" type="tns:PropertyValueStatement" name="PropertyValueStatement" nillable="true"/>
+        </xs:sequence>
+    </xs:complexType>
+    <xs:element type="tns:ListOfPropertyValueStatement" name="ListOfPropertyValueStatement" nillable="true"/>
+</xs:schema>
