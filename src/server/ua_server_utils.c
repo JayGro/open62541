@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "ua_server_internal.h"
 
 /**********************/
@@ -38,7 +42,7 @@ parse_numericrange(const UA_String *str, UA_NumericRange *range) {
         if(idx >= dimensionsMax) {
             UA_NumericRangeDimension *newds;
             size_t newdssize = sizeof(UA_NumericRangeDimension) * (dimensionsMax + 2);
-            newds = UA_realloc(dimensions, newdssize);
+            newds = (UA_NumericRangeDimension*)UA_realloc(dimensions, newdssize);
             if(!newds) {
                 retval = UA_STATUSCODE_BADOUTOFMEMORY;
                 break;
@@ -82,10 +86,10 @@ parse_numericrange(const UA_String *str, UA_NumericRange *range) {
 /********************************/
 
 UA_StatusCode
-getTypeHierarchy(UA_NodestoreSwitch* nodestoreSwitch, const UA_Node *rootRef, UA_Boolean inverse,
+getTypeHierarchy(UA_Server* server, const UA_Node *rootRef, UA_Boolean inverse,
                  UA_NodeId **typeHierarchy, size_t *typeHierarchySize) {
     size_t results_size = 20; // probably too big, but saves mallocs
-    UA_NodeId *results = UA_malloc(sizeof(UA_NodeId) * results_size);
+    UA_NodeId *results = (UA_NodeId*)UA_malloc(sizeof(UA_NodeId) * results_size);
     if(!results)
         return UA_STATUSCODE_BADOUTOFMEMORY;
 
@@ -119,14 +123,14 @@ getTypeHierarchy(UA_NodestoreSwitch* nodestoreSwitch, const UA_Node *rootRef, UA
 
             /* increase array length if necessary */
             if(last + 1 >= results_size) {
-                                UA_NodeId *new_results =
-                                    UA_realloc(results, sizeof(UA_NodeId) * results_size * 2);
-                                if(!new_results) {
-                                    retval = UA_STATUSCODE_BADOUTOFMEMORY;
-                                    break;
-                                }
-                                results = new_results;
-                                results_size *= 2;
+                UA_NodeId *new_results =
+                    (UA_NodeId*)UA_realloc(results, sizeof(UA_NodeId) * results_size * 2);
+                if(!new_results) {
+                    retval = UA_STATUSCODE_BADOUTOFMEMORY;
+                    break;
+                }
+                results = new_results;
+                results_size *= 2;
             }
 
             /* copy new nodeid to the end of the list */
@@ -140,12 +144,12 @@ getTypeHierarchy(UA_NodestoreSwitch* nodestoreSwitch, const UA_Node *rootRef, UA
         ++idx;
         if(idx > last || retval != UA_STATUSCODE_GOOD)
             break;
-        node = UA_NodestoreSwitch_get(nodestoreSwitch ,&results[idx]);
+        node = UA_NodestoreSwitch_getNode(server ,&results[idx]);
         if(!node || node->nodeClass != rootRef->nodeClass){
-            UA_NodestoreSwitch_release(nodestoreSwitch, node);
+            UA_NodestoreSwitch_releaseNode(server, node);
             goto next;
         }
-        UA_NodestoreSwitch_release(nodestoreSwitch, node);
+        UA_NodestoreSwitch_releaseNode(server, node);
     }
 
     if(retval != UA_STATUSCODE_GOOD) {
@@ -159,12 +163,12 @@ getTypeHierarchy(UA_NodestoreSwitch* nodestoreSwitch, const UA_Node *rootRef, UA
 }
 
 UA_Boolean
-isNodeInTree(UA_NodestoreSwitch* nodestoreSwitch, const UA_NodeId *leafNode, const UA_NodeId *nodeToFind,
+isNodeInTree(UA_Server* server, const UA_NodeId *leafNode, const UA_NodeId *nodeToFind,
              const UA_NodeId *referenceTypeIds, size_t referenceTypeIdsSize) {
     if(UA_NodeId_equal(leafNode, nodeToFind))
         return true;
 
-    const UA_Node *node = UA_NodestoreSwitch_get(nodestoreSwitch ,leafNode);
+    const UA_Node *node = UA_NodestoreSwitch_getNode(server ,leafNode);
     if(!node)
         return false;
 
@@ -176,14 +180,14 @@ isNodeInTree(UA_NodestoreSwitch* nodestoreSwitch, const UA_NodeId *leafNode, con
         /* Recurse only for valid reference types */
         for(size_t j = 0; j < referenceTypeIdsSize; ++j) {
             if(UA_NodeId_equal(&node->references[i].referenceTypeId, &referenceTypeIds[j]) &&
-               isNodeInTree(nodestoreSwitch, &node->references[i].targetId.nodeId, nodeToFind,
+               isNodeInTree(server, &node->references[i].targetId.nodeId, nodeToFind,
                             referenceTypeIds, referenceTypeIdsSize)){
-                UA_NodestoreSwitch_release(nodestoreSwitch, node);
+                UA_NodestoreSwitch_releaseNode(server, node);
                 return true;
             }
         }
     }
-    UA_NodestoreSwitch_release(nodestoreSwitch, node);
+    UA_NodestoreSwitch_releaseNode(server, node);
     return false;
 }
 
@@ -218,30 +222,28 @@ getNodeType(UA_Server *server, const UA_Node *node) {
 
     if(!parentId)
         return NULL;
-    return UA_NodestoreSwitch_get(server->nodestoreSwitch ,parentId);
+    return UA_NodestoreSwitch_getNode(server ,parentId);
 }
 
 const UA_VariableTypeNode *
 getVariableNodeType(UA_Server *server, const UA_VariableNode *node) {
     const UA_Node *type = getNodeType(server, (const UA_Node*)node);
     if(!type || type->nodeClass != UA_NODECLASS_VARIABLETYPE){
-        UA_NodestoreSwitch_release(server->nodestoreSwitch, type);
+        UA_NodestoreSwitch_releaseNode(server, type);
         return NULL;
     }
     return (const UA_VariableTypeNode*)type;
 }
 
-/* Never Used? --> If used be sure to release the node with
- * UA_NodestoreSwitch_release(server->nodestoreSwitch, node_returned_from_this_function);
 const UA_ObjectTypeNode *
 getObjectNodeType(UA_Server *server, const UA_ObjectNode *node) {
     const UA_Node *type = getNodeType(server, (const UA_Node*)node);
     if(type->nodeClass != UA_NODECLASS_OBJECTTYPE){
-        UA_NodestoreSwitch_release(server->nodestoreSwitch, type);
+        UA_NodestoreSwitch_releaseNode(server, type);
         return NULL;
     }
     return (const UA_ObjectTypeNode*)type;
-}*/
+}
 
 UA_Boolean
 UA_Node_hasSubTypeOrInstances(const UA_Node *node) {
@@ -258,25 +260,20 @@ UA_Node_hasSubTypeOrInstances(const UA_Node *node) {
     return false;
 }
 
-/* For mulithreading: make a copy of the node, edit and replace.
- * For singletrheading: edit the original */
+/* Make a copy of the node, edit and replace. */
 UA_StatusCode
 UA_Server_editNode(UA_Server *server, UA_Session *session,
                    const UA_NodeId *nodeId, UA_EditNodeCallback callback,
                    const void *data) {
     UA_StatusCode retval;
-    UA_Int16 failCounts = 0;
-    do {
-        UA_Node *copy = UA_NodestoreSwitch_getCopy(server->nodestoreSwitch, nodeId);
-        if(!copy)
-            return UA_STATUSCODE_BADOUTOFMEMORY;
-        retval = callback(server, session, copy, data);
-        if(retval != UA_STATUSCODE_GOOD) {
-            UA_NodestoreSwitch_deleteNode(server->nodestoreSwitch, copy);
-            return retval;
-        }
-        retval = UA_NodestoreSwitch_replace(server->nodestoreSwitch, copy);
-        failCounts++;
-    } while(retval != UA_STATUSCODE_GOOD && failCounts < 10); //TODO FailCounts as attribute from Server.config ?
-    return UA_STATUSCODE_GOOD;
+    UA_Node *copy = UA_NodestoreSwitch_getNodeCopy(server, nodeId);
+    if(!copy)
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    retval = callback(server, session, copy, data);
+    if(retval != UA_STATUSCODE_GOOD) {
+        UA_NodestoreSwitch_deleteNode(server, copy);
+        return retval;
+    }
+    retval = UA_NodestoreSwitch_replaceNode(server, copy);
+    return retval;
 }

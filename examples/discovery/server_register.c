@@ -5,31 +5,18 @@
  * Before shutdown it has to unregister itself.
  */
 
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-
 #ifdef _MSC_VER
 # include <io.h> //access
 #else
 # include <unistd.h> //access
 #endif
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include "open62541.h"
 
-
-#ifdef UA_NO_AMALGAMATION
-# include "ua_types.h"
-# include "ua_server.h"
-# include "ua_config_standard.h"
-# include "ua_network_tcp.h"
-# include "ua_log_stdout.h"
-#else
-# include "open62541.h"
-#endif
-
-
-UA_Boolean running = true;
 UA_Logger logger = UA_Log_Stdout;
-
+UA_Boolean running = true;
 static void stopHandler(int sign) {
     UA_LOG_INFO(logger, UA_LOGCATEGORY_SERVER, "received ctrl-c");
     running = false;
@@ -112,8 +99,8 @@ static void periodicServerRegister(UA_Server *server, void *data) {
         // as long as next retry is smaller than 10 minutes, retry
         if (nextInterval < 10*60) {
             UA_LOG_INFO(logger, UA_LOGCATEGORY_SERVER, "Retrying registration in %d seconds", nextInterval);
-            struct PeriodicServerRegisterJob *newRetryJob = malloc(sizeof(struct PeriodicServerRegisterJob));
-            newRetryJob->job = malloc(sizeof(UA_Job));
+            struct PeriodicServerRegisterJob *newRetryJob = (struct PeriodicServerRegisterJob*)malloc(sizeof(struct PeriodicServerRegisterJob));
+            newRetryJob->job = (UA_Job*)malloc(sizeof(UA_Job));
             newRetryJob->this_interval = nextInterval;
 
             newRetryJob->job->type = UA_JOBTYPE_METHODCALL;
@@ -142,8 +129,10 @@ int main(int argc, char** argv) {
     UA_Int32 myInteger = 42;
     UA_NodeId myIntegerNodeId = UA_NODEID_STRING(1, "the.answer");
     UA_QualifiedName myIntegerName = UA_QUALIFIEDNAME(1, "the answer");
-    UA_DataSource dateDataSource = (UA_DataSource) {
-            .handle = &myInteger, .read = readInteger, .write = writeInteger};
+    UA_DataSource dateDataSource;
+    dateDataSource.handle = &myInteger;
+    dateDataSource.read = readInteger;
+    dateDataSource.write = writeInteger;
     UA_VariableAttributes attr;
     UA_VariableAttributes_init(&attr);
     attr.description = UA_LOCALIZEDTEXT("en_US","the answer");
@@ -156,15 +145,17 @@ int main(int argc, char** argv) {
 
 
     // registering the server should be done periodically. Approx. every 10 minutes. The first call will be in 10 Minutes.
-    UA_Job job = {.type = UA_JOBTYPE_METHODCALL,
-            .job.methodCall = {.method = periodicServerRegister, .data = NULL} };
+    UA_Job job;
+    job.type = UA_JOBTYPE_METHODCALL;
+    job.job.methodCall.data = NULL;
+    job.job.methodCall.method = periodicServerRegister;
     UA_Server_addRepeatedJob(server, job, 10*60*1000, NULL);
 
     // Register the server with the discovery server.
     // Delay this first registration until the server is fully initialized
     // will be freed in the callback
-    struct PeriodicServerRegisterJob *newRetryJob = malloc(sizeof(struct PeriodicServerRegisterJob));
-    newRetryJob->job = malloc(sizeof(UA_Job));
+    struct PeriodicServerRegisterJob *newRetryJob = (struct PeriodicServerRegisterJob*)malloc(sizeof(struct PeriodicServerRegisterJob));
+    newRetryJob->job = (UA_Job*)malloc(sizeof(UA_Job));
     newRetryJob->this_interval = 0;
     newRetryJob->job->type = UA_JOBTYPE_METHODCALL;
     newRetryJob->job->job.methodCall.method = periodicServerRegister;

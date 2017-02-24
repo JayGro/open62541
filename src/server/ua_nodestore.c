@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "ua_nodestore.h"
 #include "ua_server_internal.h"
 #include "ua_util.h"
@@ -19,6 +23,8 @@ struct UA_NodeStore {
     UA_UInt32 size;
     UA_UInt32 count;
     UA_UInt32 sizePrimeIndex;
+    UA_UInt16 * linkedNamespaces;
+    size_t    linkedNamespacesLength;
 };
 
 /* The size of the hash-map is always a prime number. They are chosen to be
@@ -79,7 +85,7 @@ instantiateEntry(UA_NodeClass nodeClass) {
     default:
         return NULL;
     }
-    UA_NodeStoreEntry *entry = UA_calloc(1, size);
+    UA_NodeStoreEntry *entry = (UA_NodeStoreEntry *)UA_calloc(1, size);
     if(!entry)
         return NULL;
     entry->node.nodeClass = nodeClass;
@@ -153,7 +159,7 @@ expand(UA_NodeStore *ns) {
     UA_NodeStoreEntry **oentries = ns->entries;
     UA_UInt32 nindex = higher_prime_index(count * 2);
     UA_UInt32 nsize = primes[nindex];
-    UA_NodeStoreEntry **nentries = UA_calloc(nsize, sizeof(UA_NodeStoreEntry*));
+    UA_NodeStoreEntry **nentries = (UA_NodeStoreEntry **)UA_calloc(nsize, sizeof(UA_NodeStoreEntry*));
     if(!nentries)
         return UA_STATUSCODE_BADOUTOFMEMORY;
 
@@ -174,19 +180,16 @@ expand(UA_NodeStore *ns) {
     return UA_STATUSCODE_GOOD;
 }
 
-/**********************/
-/* Exported functions */
-/**********************/
-
-UA_NodeStore *
-UA_NodeStore_new(void) {
-    UA_NodeStore *ns = UA_malloc(sizeof(UA_NodeStore));
+static UA_NodeStore *
+initNodestore(UA_NodeStore * ns){
     if(!ns)
         return NULL;
     ns->sizePrimeIndex = higher_prime_index(UA_NODESTORE_MINSIZE);
     ns->size = primes[ns->sizePrimeIndex];
     ns->count = 0;
-    ns->entries = UA_calloc(ns->size, sizeof(UA_NodeStoreEntry*));
+    ns->linkedNamespacesLength = 0;
+    ns->linkedNamespaces = NULL;
+    ns->entries = (UA_NodeStoreEntry **) UA_calloc(ns->size, sizeof(UA_NodeStoreEntry*));
     if(!ns->entries) {
         UA_free(ns);
         return NULL;
@@ -194,9 +197,25 @@ UA_NodeStore_new(void) {
     return ns;
 }
 
+
+/**********************/
+/* Exported functions */
+/**********************/
+
+UA_NodeStore *
+UA_NodeStore_new(void) {
+    UA_NodeStore *ns = (UA_NodeStore*)UA_malloc(sizeof(UA_NodeStore));
+    return initNodestore(ns);
+}
+
 void
-UA_NodeStore_delete(UA_NodeStore *ns) {
-    if(ns->size == 0) return; //ns already deleted
+UA_NodeStore_delete(UA_NodeStore *ns, UA_UInt16 namespaceIndex) {
+    if(UA_NodeStore_unlinkNamespace(ns, namespaceIndex) != UA_STATUSCODE_GOOD)
+        return;
+    //Delete all nodes if all namespaces are unlinked
+    if(ns->linkedNamespacesLength > 0) return;
+    UA_free(ns->linkedNamespaces);
+    ns->linkedNamespaces = NULL;
     UA_UInt32 size = ns->size;
     UA_NodeStoreEntry **entries = ns->entries;
     for(UA_UInt32 i = 0; i < size; ++i) {
@@ -204,8 +223,44 @@ UA_NodeStore_delete(UA_NodeStore *ns) {
             deleteEntry(entries[i]);
     }
     UA_free(ns->entries);
-    ns->size = 0;
 }
+
+UA_StatusCode
+UA_NodeStore_linkNamespace(UA_NodeStore *ns, UA_UInt16 namespaceIndex){
+    UA_UInt16 * newLinkedNs = (UA_UInt16*)UA_realloc(ns->linkedNamespaces, sizeof(UA_UInt16)*(ns->linkedNamespacesLength + 1));
+    if(!newLinkedNs){
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    }
+    ns->linkedNamespaces = newLinkedNs;
+    ns->linkedNamespaces[ns->linkedNamespacesLength] = namespaceIndex;
+    ns->linkedNamespacesLength = ns->linkedNamespacesLength + 1;
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode
+UA_NodeStore_unlinkNamespace(UA_NodeStore *ns, UA_UInt16 namespaceIndex){
+    size_t lNsLength = ns->linkedNamespacesLength;
+    if(lNsLength == 0)
+        return UA_STATUSCODE_BADINTERNALERROR;
+    UA_UInt16 * newLinkedNs = (UA_UInt16*)UA_malloc(sizeof(UA_UInt16) * (lNsLength -1));
+    if(!newLinkedNs)
+        return UA_STATUSCODE_BADNOTFOUND;
+    size_t j = 0;
+    for(size_t i = 0; i < lNsLength ; ++i) {
+        if(namespaceIndex != ns->linkedNamespaces[i]){
+            if(j == lNsLength){
+                UA_free(newLinkedNs);
+                return UA_STATUSCODE_BADNOTFOUND;
+            }
+            newLinkedNs[j++] = ns->linkedNamespaces[i];
+        }
+    }
+    ns->linkedNamespacesLength = lNsLength - 1;
+    UA_free(ns->linkedNamespaces);
+    ns->linkedNamespaces = newLinkedNs;
+    return UA_STATUSCODE_GOOD;
+}
+
 
 UA_Node *
 UA_NodeStore_newNode(UA_NodeClass nodeClass) {
@@ -223,8 +278,7 @@ UA_NodeStore_deleteNode(UA_Node *node) {
 }
 
 UA_StatusCode
-UA_NodeStore_insert(UA_NodeStore *ns, UA_Node *node,
-        const UA_NodeId *parentNodeId, UA_NodeId *addedNodeId) {
+UA_NodeStore_insert(UA_NodeStore *ns, UA_Node *node, UA_NodeId *addedNodeId) {
     if(ns->size * 3 <= ns->count * 4) {
         if(expand(ns) != UA_STATUSCODE_GOOD){
             return UA_STATUSCODE_BADINTERNALERROR;
@@ -254,13 +308,14 @@ UA_NodeStore_insert(UA_NodeStore *ns, UA_Node *node,
     } else {
         entry = findSlot(ns, &node->nodeId);
         if(!entry) {
-            deleteEntry(container_of(node, UA_NodeStoreEntry, node));
+            UA_NodeStore_deleteNode(node);
             return UA_STATUSCODE_BADNODEIDEXISTS;
         }
     }
 
     *entry = container_of(node, UA_NodeStoreEntry, node);
     ++ns->count;
+    UA_assert(&(*entry)->node == node);
 
     if(addedNodeId)
         return UA_NodeId_copy(&node->nodeId, addedNodeId);
@@ -297,15 +352,15 @@ UA_NodeStore_getCopy(UA_NodeStore *ns, const UA_NodeId *nodeid) {
     if(!slot)
         return NULL;
     UA_NodeStoreEntry *entry = *slot;
-    UA_NodeStoreEntry *new = instantiateEntry(entry->node.nodeClass);
-    if(!new)
+    UA_NodeStoreEntry *newItem = instantiateEntry(entry->node.nodeClass);
+    if(!newItem)
         return NULL;
-    if(UA_Node_copyAnyNodeClass(&entry->node, &new->node) != UA_STATUSCODE_GOOD) {
-        deleteEntry(new);
+    if(UA_Node_copyAnyNodeClass(&entry->node, &newItem->node) != UA_STATUSCODE_GOOD) {
+        deleteEntry(newItem);
         return NULL;
     }
-    new->orig = entry; // store the pointer to the original
-    return &new->node;
+    newItem->orig = entry; // store the pointer to the original
+    return &newItem->node;
 }
 
 UA_StatusCode
@@ -323,10 +378,10 @@ UA_NodeStore_remove(UA_NodeStore *ns, const UA_NodeId *nodeid) {
 }
 
 void
-UA_NodeStore_iterate(UA_NodeStore *ns, UA_NodeStore_nodeVisitor visitor) {
+UA_NodeStore_iterate(UA_NodeStore *ns, void *visitorHandle , UA_NodestoreInterface_nodeVisitor visitor) {
     for(UA_UInt32 i = 0; i < ns->size; ++i) {
         if(ns->entries[i] > UA_NODESTORE_TOMBSTONE)
-            visitor((UA_Node*)&ns->entries[i]->node);
+            visitor(visitorHandle,(UA_Node*)&ns->entries[i]->node);
     }
 }
 

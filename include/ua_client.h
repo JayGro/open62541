@@ -1,15 +1,6 @@
-/* Copyright (C) 2014-2016 the contributors as stated in the AUTHORS file
- *
- * This file is part of open62541. open62541 is free software: you can
- * redistribute it and/or modify it under the terms of the GNU Lesser General
- * Public License, version 3 (as published by the Free Software Foundation) with
- * a static linking exception as stated in the LICENSE file provided with
- * open62541.
- *
- * open62541 is distributed in the hope that it will be useful, but WITHOUT ANY
- * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
- * A PARTICULAR PURPOSE. See the GNU Lesser General Public License for more
- * details. */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef UA_CLIENT_H_
 #define UA_CLIENT_H_
@@ -24,6 +15,7 @@ extern "C" {
 #include "ua_log.h"
 #include "ua_types_generated.h"
 #include "ua_types_generated_handling.h"
+#include "ua_namespace.h"
 
 /**
  * .. _client:
@@ -56,9 +48,9 @@ typedef struct UA_ClientConfig {
     UA_ConnectionConfig localConnectionConfig;
     UA_ConnectClientConnection connectionFunc;
 
-    /* Custom DataTypes */
-    size_t customDataTypesSize;
-    const UA_DataType *customDataTypes;
+    /* Supported namespaces */
+    size_t namespacesSize;
+    UA_Namespace * namespaces;
 } UA_ClientConfig;
 
 /**
@@ -139,6 +131,16 @@ UA_StatusCode UA_EXPORT UA_Client_disconnect(UA_Client *client);
 
 /* Renew the underlying secure channel */
 UA_StatusCode UA_EXPORT UA_Client_manuallyRenewSecureChannel(UA_Client *client);
+
+/* Add or Change a supported Namespace.
+ * In order to determine the namespaceindex for the namespace URI,the Client tries to
+ * connected and read the namespace array first.
+ * returns UA_STATUSCODE_BADOUTOFMEMORY if client has no memory for the namespace entry.
+ * A reconnect (updates the index automatically) is necessary,
+ * if the namespace array in the server is changed.
+*/
+UA_StatusCode UA_EXPORT
+UA_Client_addNamespace(UA_Client* client, UA_Namespace * namespacePtr);
 
 /**
  * .. _client-services:

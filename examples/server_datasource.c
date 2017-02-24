@@ -3,16 +3,7 @@
 
 #include <signal.h>
 #include <stdio.h>
-
-#ifdef UA_NO_AMALGAMATION
-# include "ua_types.h"
-# include "ua_server.h"
-# include "ua_config_standard.h"
-# include "ua_network_tcp.h"
-# include "ua_log_stdout.h"
-#else
-# include "open62541.h"
-#endif
+#include "open62541.h"
 
 UA_Boolean running = true;
 UA_Logger logger = UA_Log_Stdout;
@@ -61,8 +52,10 @@ int main(int argc, char** argv) {
     UA_Int32 myInteger = 42;
     UA_NodeId myIntegerNodeId = UA_NODEID_STRING(1, "the.answer");
     UA_QualifiedName myIntegerName = UA_QUALIFIEDNAME(1, "the answer");
-    UA_DataSource dateDataSource = (UA_DataSource) {
-        .handle = &myInteger, .read = readInteger, .write = writeInteger};
+    UA_DataSource dataSource;
+    dataSource.handle = &myInteger;
+    dataSource.read = readInteger;
+    dataSource.write = NULL;
     UA_VariableAttributes attr;
     UA_VariableAttributes_init(&attr);
     attr.description = UA_LOCALIZEDTEXT("en_US","the answer");
@@ -71,7 +64,7 @@ int main(int argc, char** argv) {
     UA_Server_addDataSourceVariableNode(server, myIntegerNodeId,
                                         UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER),
                                         UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
-                                        myIntegerName, UA_NODEID_NULL, attr, dateDataSource, NULL);
+                                        myIntegerName, UA_NODEID_NULL, attr, dataSource, NULL);
 
     UA_StatusCode retval = UA_Server_run(server, &running);
     UA_Server_delete(server);

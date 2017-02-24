@@ -2,25 +2,16 @@
  * See http://creativecommons.org/publicdomain/zero/1.0/ for more information. */
 
 #ifdef _MSC_VER
-#define _CRT_SECURE_NO_WARNINGS //disable fopen deprication warning in msvs
+#define _CRT_SECURE_NO_WARNINGS /* disable fopen deprication warning in msvs */
 #endif
 
-#ifdef UA_NO_AMALGAMATION
-# include <time.h>
-# include "ua_types.h"
-# include "ua_server.h"
-# include "ua_config_standard.h"
-# include "ua_network_tcp.h"
-# include "ua_log_stdout.h"
-#else
-# include "open62541.h"
-#endif
 
 #include <signal.h>
 #include <errno.h> // errno, EINTR
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "open62541.h"
 
 UA_Boolean running = true;
 UA_Logger logger = UA_Log_Stdout;
@@ -38,7 +29,7 @@ static UA_ByteString loadCertificate(void) {
 
     fseek(fp, 0, SEEK_END);
     certificate.length = (size_t)ftell(fp);
-    certificate.data = malloc(certificate.length*sizeof(UA_Byte));
+    certificate.data = (UA_Byte*)malloc(certificate.length*sizeof(UA_Byte));
     if(!certificate.data)
         return certificate;
 
@@ -86,7 +77,7 @@ helloWorld(void *methodHandle, const UA_NodeId *objectId,
     UA_String hello = UA_STRING("Hello ");
     UA_String greet;
     greet.length = hello.length + name->length;
-    greet.data = malloc(greet.length);
+    greet.data = (UA_Byte*)malloc(greet.length);
     memcpy(greet.data, hello.data, hello.length);
     memcpy(greet.data + hello.length, name->data, name->length);
     UA_Variant_setScalarCopy(output, &greet, &UA_TYPES[UA_TYPES_STRING]);
@@ -143,7 +134,10 @@ int main(int argc, char** argv) {
     UA_Variant_deleteMembers(&myVar.value);
 
     /* add a variable with the datetime data source */
-    UA_DataSource dateDataSource = (UA_DataSource) {.handle = NULL, .read = readTimeData, .write = NULL};
+    UA_DataSource dateDataSource;
+    dateDataSource.handle = NULL;
+    dateDataSource.read = readTimeData;
+    dateDataSource.write = NULL;
     UA_VariableAttributes v_attr;
     UA_VariableAttributes_init(&v_attr);
     v_attr.description = UA_LOCALIZEDTEXT("en_US","current time");
@@ -268,7 +262,7 @@ int main(int argc, char** argv) {
 
         /* add an matrix node for every built-in type */
         void* myMultiArray = UA_Array_new(9, &UA_TYPES[type]);
-        attr.value.arrayDimensions = UA_Array_new(2, &UA_TYPES[UA_TYPES_INT32]);
+        attr.value.arrayDimensions = (UA_UInt32*)UA_Array_new(2, &UA_TYPES[UA_TYPES_INT32]);
         attr.value.arrayDimensions[0] = 3;
         attr.value.arrayDimensions[1] = 3;
         attr.value.arrayDimensionsSize = 2;

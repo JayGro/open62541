@@ -1,17 +1,6 @@
-/*
- * Copyright (C) 2014 the contributors as stated in the AUTHORS file
- *
- * This file is part of open62541. open62541 is free software: you can
- * redistribute it and/or modify it under the terms of the GNU Lesser General
- * Public License, version 3 (as published by the Free Software Foundation) with
- * a static linking exception as stated in the LICENSE file provided with
- * open62541.
- *
- * open62541 is distributed in the hope that it will be useful, but WITHOUT ANY
- * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
- * A PARTICULAR PURPOSE. See the GNU Lesser General Public License for more
- * details.
- */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef UA_SERVER_H_
 #define UA_SERVER_H_
@@ -29,6 +18,7 @@ extern "C" {
 #include "ua_job.h"
 #include "ua_connection.h"
 #include "ua_nodestore_interface.h"
+#include "ua_namespace.h"
 
 /**
  * .. _server:
@@ -169,17 +159,13 @@ typedef struct {
     UA_ApplicationDescription applicationDescription;
     UA_ByteString serverCertificate;
 
-    /* Custom DataTypes */
-    size_t customDataTypesSize;
-    const UA_DataType *customDataTypes;
-
     /* Networking */
     size_t networkLayersSize;
     UA_ServerNetworkLayer *networkLayers;
 
-    /* NS0 and NS1 NodeStore */
-    UA_NodestoreInterface *nodestore0;
-    UA_NodestoreInterface *nodestore1;
+    /* Namespace add server startup */
+    size_t namespacesSize;
+    UA_Namespace *namespaces;
 
     /* Access Control */
     UA_AccessControl accessControl;
@@ -214,11 +200,21 @@ typedef struct {
 #endif
 } UA_ServerConfig;
 
-/* Add a new namespace to the server using the NS1 Nodestore. Returns the index of the new namespace */
-UA_UInt16 UA_EXPORT UA_Server_addNamespace(UA_Server *server, const char* name);
+/* Add a new namespace to the server using the Nodestore of namespace 1 and no custom datatypes.
+ * Returns the index of the new or already existing namespace */
+UA_UInt16 UA_EXPORT
+UA_Server_addNamespace(UA_Server *server, const char* namespaceUri);
 
-/* Add a new namespace to the server using the defined Nodestore. Returns the index of the new namespace */
-UA_UInt16 UA_EXPORT UA_Server_addNamespace_Nodestore(UA_Server *server, const char* name, UA_NodestoreInterface* nodestore);
+/* Add a new namespace or change an existing one using custom DataType and Nodestores.
+ * If newCustomDataTypes or nodestore is a NULL pointer the old value is not overwridden.
+ * Returns the statuscode of the operation.
+ * The namespace uri is copied. The DataTypes are copied. The Nodestoreinterface is linked.
+*/
+UA_StatusCode UA_EXPORT
+UA_Server_addNamespace_full(UA_Server *server, UA_Namespace * namespacePtr);
+/* Delete a namespace from the server. The data type encodings and nodestores will also be deleted. */
+UA_StatusCode UA_EXPORT
+UA_Server_deleteNamespace(UA_Server *server, const char* namespaceUri);
 
 /**
  * Server Lifecycle
@@ -679,6 +675,8 @@ UA_Server_setVariableNode_dataSource(UA_Server *server, const UA_NodeId nodeId,
                                      const UA_DataSource dataSource);
 
 /**
+ * .. _value-callback:
+ *
  * Value Callback
  * ~~~~~~~~~~~~~~
  * Value Callbacks can be attached to variable and variable type nodes. If
@@ -718,12 +716,21 @@ UA_Server_setMethodNode_callback(UA_Server *server, const UA_NodeId methodNodeId
  * When creating dynamic node instances at runtime, chances are that you will
  * not care about the specific NodeId of the new node, as long as you can
  * reference it later. When passing numeric NodeIds with a numeric identifier 0,
- * the stack evaluates this as "select a randome free NodeId in that namespace".
- * To find out which NodeId was actually assigned to the new node, you may pass
- * a pointer `outNewNodeId`, which will (after a successfull node insertion)
- * contain the nodeId of the new node. You may also pass NULL pointer if this
- * result is not relevant. The namespace index for nodes you create should never
- * be 0, as that index is reserved for OPC UA's self-description (namespace 0). */
+ * the stack evaluates this as "select a random unassigned numeric NodeId in
+ * that namespace". To find out which NodeId was actually assigned to the new
+ * node, you may pass a pointer `outNewNodeId`, which will (after a successfull
+ * node insertion) contain the nodeId of the new node. You may also pass NULL
+ * pointer if this result is not relevant. The namespace index for nodes you
+ * create should never be 0, as that index is reserved for OPC UA's
+ * self-description (namespace * 0).
+ *
+ * The methods for node addition and deletion take mostly const arguments that
+ * are not modified. When creating a node, a deep copy of the node identifier,
+ * node attributes, etc. is created. Therefore, it is possible to call for
+ * example `UA_Server_addVariablenode` with a value attribute (a :ref:`variant`)
+ * pointing to a memory location on the stack. If you need changes to a variable
+ * value to manifest at a specific memory location, please use a
+ * :ref:`datasource` or a :ref:`value-callback`. */
 /* The instantiation callback is used to track the addition of new nodes. It is
  * also called for all sub-nodes contained in an object or variable type node
  * that is instantiated. */

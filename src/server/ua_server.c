@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "ua_types.h"
 #include "ua_server_internal.h"
 #include "ua_securechannel_manager.h"
@@ -27,78 +31,202 @@ UA_THREAD_LOCAL bool rcu_locked = false;
 #if defined(UA_ENABLE_METHODCALLS) && defined(UA_ENABLE_SUBSCRIPTIONS)
 UA_THREAD_LOCAL UA_Session* methodCallSession = NULL;
 #endif
-
 static const UA_NodeId nodeIdHasSubType = {
-    .namespaceIndex = 0, .identifierType = UA_NODEIDTYPE_NUMERIC,
-    .identifier.numeric = UA_NS0ID_HASSUBTYPE};
+    0,UA_NODEIDTYPE_NUMERIC,{UA_NS0ID_HASSUBTYPE}};
 static const UA_NodeId nodeIdHasComponent = {
-    .namespaceIndex = 0, .identifierType = UA_NODEIDTYPE_NUMERIC,
-    .identifier.numeric = UA_NS0ID_HASCOMPONENT};
+    0,UA_NODEIDTYPE_NUMERIC,{UA_NS0ID_HASCOMPONENT}};
 static const UA_NodeId nodeIdHasProperty = {
-    .namespaceIndex = 0, .identifierType = UA_NODEIDTYPE_NUMERIC,
-    .identifier.numeric = UA_NS0ID_HASPROPERTY};
+    0,UA_NODEIDTYPE_NUMERIC,{UA_NS0ID_HASPROPERTY}};
 static const UA_NodeId nodeIdOrganizes = {
-    .namespaceIndex = 0, .identifierType = UA_NODEIDTYPE_NUMERIC,
-    .identifier.numeric = UA_NS0ID_ORGANIZES};
+    0,UA_NODEIDTYPE_NUMERIC,{UA_NS0ID_ORGANIZES}};
 
 #ifndef UA_ENABLE_GENERATE_NAMESPACE0
 static const UA_NodeId nodeIdNonHierarchicalReferences = {
-        .namespaceIndex = 0, .identifierType = UA_NODEIDTYPE_NUMERIC,
-        .identifier.numeric = UA_NS0ID_NONHIERARCHICALREFERENCES};
+    0,UA_NODEIDTYPE_NUMERIC,{UA_NS0ID_NONHIERARCHICALREFERENCES}};
 #endif
 
 /**********************/
 /* Namespace Handling */
 /**********************/
 
-UA_UInt16 addNamespace_nodestore(UA_Server *server, const UA_String name,
-                                 UA_NodestoreInterface* nodestore){ 
-    /* Check if the namespace already exists in the server's namespace array */
-    for(UA_UInt16 i = 0; i < server->namespacesSize; ++i) {
-        if(UA_String_equal(&name, &server->namespaces[i])) {
-            UA_NodestoreSwitch_change(server->nodestoreSwitch, nodestore,i); //TODO add Boolean Parameter for replace? Or do not replace and create changeNamespace method.
-            return i;
+static UA_StatusCode
+replaceNamespaceArray_server(UA_Server * server,
+        UA_String * newNsUris, size_t newNsSize){
+
+    UA_LOG_INFO(server->config.logger, UA_LOGCATEGORY_SERVER,
+            "Changing the servers namespace array with new length: %i.", newNsSize);
+    /* Check if new namespace uris are unique */
+    for(size_t i = 0 ; i < newNsSize-1 ; ++i){
+        for(size_t j = i+1 ; j < newNsSize ; ++j){
+            if(UA_String_equal(&newNsUris[i], &newNsUris[j])){
+                return UA_STATUSCODE_BADINVALIDARGUMENT;
+            }
         }
     }
 
-    /* Make the array bigger */
-    UA_String *newNS = UA_realloc(server->namespaces,
-                                  sizeof(UA_String) * (server->namespacesSize + 1));
-    if(!newNS)
-        return 0;
-    server->namespaces = newNS;
+    /* Announce changing process */
+    //TODO set lock flag
+    size_t oldNsSize = server->namespacesSize;
+    server->namespacesSize = 0;
 
-    /* Copy the namespace string */
-    UA_StatusCode retval = UA_String_copy(&name, &server->namespaces[server->namespacesSize]);
-    if(retval != UA_STATUSCODE_GOOD)
-        return 0;
+    /* Alloc new NS Array  */
+    UA_Namespace * newNsArray = (UA_Namespace*)UA_malloc(newNsSize * sizeof(UA_Namespace));
+    if(!newNsArray)
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    /* Alloc new index mapping array. Old ns index --> new ns index */
+    size_t* oldNsIdxToNewNsIdx = (size_t*)UA_malloc(oldNsSize * sizeof(size_t));
+    if(!oldNsIdxToNewNsIdx){
+        UA_free(newNsArray);
+        server->namespacesSize = oldNsSize;
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    }
+    //Fill oldNsIdxToNewNsIdx with default values
+    for(size_t i = 0 ; i < oldNsSize ; ++i){
+        oldNsIdxToNewNsIdx[i] = (size_t)UA_NAMESPACE_UNDEFINED;
+    }
+
+    /* Search for old ns and copy it. If not found add a new namespace with default values. */
+    //TODO forbid change of namespace 0?
+    for(size_t newIdx = 0 ; newIdx < newNsSize ; ++newIdx){
+        UA_Boolean nsExists = UA_FALSE;
+        for(size_t oldIdx = 0 ; oldIdx < oldNsSize ; ++oldIdx){
+            if(UA_String_equal(&newNsUris[newIdx], &server->namespaces[oldIdx].uri)){
+                nsExists = UA_TRUE;
+                newNsArray[newIdx] = server->namespaces[oldIdx];
+                oldNsIdxToNewNsIdx[oldIdx] = newIdx; //Mark as already copied
+                break;
+            }
+        }
+        if(nsExists == UA_FALSE){
+            UA_Namespace_init(&newNsArray[newIdx], &newNsUris[newIdx]);
+        }
+    }
+
+    /* Update the namespace indices in data types, new namespaces and nodestores. Set default nodestores */
+    UA_Namespace_updateNodestores(newNsArray,newNsSize,
+                                  oldNsIdxToNewNsIdx, oldNsSize);
+    for(size_t newIdx = 0 ; newIdx < newNsSize ; ++newIdx){
+        UA_Namespace_updateDataTypes(&newNsArray[newIdx], NULL, (UA_UInt16)newIdx);
+        newNsArray[newIdx].index = (UA_UInt16)newIdx;
+        if(!newNsArray[newIdx].nodestore){
+            newNsArray[newIdx].nodestore = server->nodestore_std;
+            newNsArray[newIdx].nodestore->linkNamespace(newNsArray[newIdx].nodestore->handle, (UA_UInt16)newIdx);
+        }
+    }
+
+    /* Delete old unused namespaces */
+    for(size_t i = 0; i<oldNsSize; ++i){
+        if(oldNsIdxToNewNsIdx[i] == (size_t)UA_NAMESPACE_UNDEFINED)
+            UA_Namespace_deleteMembers(&server->namespaces[i]);
+    }
+
+    /* Cleanup, copy new namespace array to server and make visible */
+    UA_free(oldNsIdxToNewNsIdx);
+    UA_free(server->namespaces);
+    server->namespaces = newNsArray;
+    server->namespacesSize = newNsSize;
+    //TODO make multithreading save and do at last step --> add real namespace array size as parameter or lock namespacearray?
+
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode
+writeNamespaces(void *handle, const UA_NodeId nodeid, const UA_Variant *data,
+                const UA_NumericRange *range) {
+    UA_Server *server = (UA_Server*)handle;
+
+    /* Check the data type */
+    if(data->type != &UA_TYPES[UA_TYPES_STRING])
+        return UA_STATUSCODE_BADTYPEMISMATCH;
+
+    /* Check that the variant is not empty */
+    if(!data->data)
+        return UA_STATUSCODE_BADTYPEMISMATCH;
+
+    /* TODO: Writing with a range is not implemented */
+    if(range)
+        return UA_STATUSCODE_BADNOTIMPLEMENTED;
+
+    /* Reorder and replace the namespaces with all consequences */
+    UA_StatusCode retval = replaceNamespaceArray_server(server,
+            (UA_String *)data->data, (size_t)data->arrayLength);
+
+    if(retval == UA_STATUSCODE_GOOD)
+        return UA_STATUSCODE_GOODEDITED; //Don't return good, as namespace array could be moved
+    return retval;
+}
+
+static void
+changeNamespace_server(UA_Server * server, UA_Namespace* newNs,  size_t newNsIdx){
+    //change Nodestore
+    UA_Namespace_changeNodestore(&server->namespaces[newNsIdx], newNs, server->nodestore_std,
+            (UA_UInt16) newNsIdx);
+
+    //Change and update DataTypes
+    UA_Namespace_updateDataTypes(&server->namespaces[newNsIdx], newNs, (UA_UInt16)newNsIdx);
+
+    //Update indices in namespaces
+    newNs->index = (UA_UInt16)newNsIdx;
+    server->namespaces[newNsIdx].index = (UA_UInt16)newNsIdx;
+}
+
+UA_StatusCode
+UA_Server_addNamespace_full(UA_Server *server, UA_Namespace* namespacePtr){
+    /* Check if the namespace already exists in the server's namespace array */
+    for(size_t i = 0; i < server->namespacesSize; ++i) {
+        if(UA_String_equal(&namespacePtr->uri, &server->namespaces[i].uri)){
+            changeNamespace_server(server, namespacePtr, i);
+            return UA_STATUSCODE_GOOD;
+        }
+    }
+    /* Namespace doesn't exist alloc space in namespaces array */
+    UA_Namespace *newNsArray = (UA_Namespace*)UA_realloc(server->namespaces,
+            sizeof(UA_Namespace) * (server->namespacesSize + 1));
+    if(!newNsArray)
+            return UA_STATUSCODE_BADOUTOFMEMORY;
+    server->namespaces = newNsArray;
+
+    /* Fill new namespace with values */
+    UA_Namespace_init(&server->namespaces[server->namespacesSize], &namespacePtr->uri);
+    changeNamespace_server(server, namespacePtr, server->namespacesSize);
 
     /* Announce the change (otherwise, the array appears unchanged) */
     ++server->namespacesSize;
-    UA_NodestoreSwitch_add(server->nodestoreSwitch, nodestore);
-    return (UA_UInt16)(server->namespacesSize - 1);
+    return UA_STATUSCODE_GOOD;
 }
 
-UA_UInt16 addNamespace(UA_Server *server, const UA_String name) {
-    return addNamespace_nodestore(server,name ,UA_NodestoreSwitch_getNodestoreForNamespace(server->nodestoreSwitch,1));
-    //TODO Check if NS1 Nodestore is found. Maybe a constant for default Namespace/Nodestore.
+UA_UInt16 UA_Server_addNamespace(UA_Server *server, const char* namespaceUri){
+    UA_Namespace * ns = UA_Namespace_newFromChar(namespaceUri);
+    UA_Server_addNamespace_full(server, ns);
+    UA_UInt16 retIndex = ns->index;
+    UA_Namespace_deleteMembers(ns);
+    UA_free(ns);
+    return retIndex;
+}
+UA_StatusCode UA_Server_deleteNamespace(UA_Server *server, const char* namespaceUri){
+    // Override const attribute to get string (dirty hack) /
+    UA_String nameString;
+    nameString.length = (size_t) strlen(namespaceUri);
+    nameString.data = (UA_Byte*)(uintptr_t)namespaceUri;
+
+    UA_String * newNsUris = (UA_String*)UA_malloc((server->namespacesSize-1) * sizeof(UA_String));
+    if(!newNsUris)
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+
+    /* Check if the namespace already exists in the server's namespace array */
+    size_t j = 0;
+    for(size_t i = 0; i < server->namespacesSize; ++i) {
+        if(!UA_String_equal(&nameString, &server->namespaces[i].uri)){
+            if(j == server->namespacesSize){
+                UA_free(newNsUris);
+                return UA_STATUSCODE_BADNOTFOUND;
+            }
+            newNsUris[j++] = server->namespaces[i].uri;
+        }
+    }
+    return replaceNamespaceArray_server(server, newNsUris, j);
 }
 
-UA_UInt16 UA_Server_addNamespace(UA_Server *server, const char* name) {
-    /* Override const attribute to get string (dirty hack) */
-    const UA_String nameString = {.length = strlen(name),
-                                  .data = (UA_Byte*)(uintptr_t)name};
-    return addNamespace(server, nameString);
-}
-
-UA_UInt16
-UA_Server_addNamespace_Nodestore(UA_Server *server, const char* name,
-        UA_NodestoreInterface* nodestore) {
-    /* Override const attribute to get string (dirty hack) */
-    const UA_String nameString = {.length = strlen(name),
-                                  .data = (UA_Byte*)(uintptr_t)name};
-    return addNamespace_nodestore(server, nameString, nodestore);
-}
 
 #ifdef UA_ENABLE_EXTERNAL_NAMESPACES
 static void UA_ExternalNamespace_init(UA_ExternalNamespace *ens) {
@@ -128,8 +256,14 @@ UA_Server_addExternalNamespace(UA_Server *server, const UA_String *url,
     if(!nodeStore)
         return UA_STATUSCODE_BADARGUMENTSMISSING;
 
+    char urlString[256];
+    if(url->length >= 256)
+        return UA_STATUSCODE_BADINTERNALERROR;
+    memcpy(urlString, url->data, url->length);
+    urlString[url->length] = 0;
+
     size_t size = server->externalNamespacesSize;
-    server->externalNamespaces =
+    server->externalNamespaces = (UA_ExternalNamespace*)
         UA_realloc(server->externalNamespaces, sizeof(UA_ExternalNamespace) * (size + 1));
     server->externalNamespaces[size].externalNodeStore = *nodeStore;
     server->externalNamespaces[size].index = (UA_UInt16)server->namespacesSize;
@@ -141,23 +275,45 @@ UA_Server_addExternalNamespace(UA_Server *server, const UA_String *url,
 }
 #endif /* UA_ENABLE_EXTERNAL_NAMESPACES*/
 
+
+
+
+/**********************/
+/* Utility Functions  */
+/**********************/
+
 UA_StatusCode
 UA_Server_forEachChildNodeCall(UA_Server *server, UA_NodeId parentNodeId,
                                UA_NodeIteratorCallback callback, void *handle) {
-    UA_StatusCode retval = UA_STATUSCODE_GOOD;
     UA_RCU_LOCK();
-    const UA_Node *parent = UA_NodestoreSwitch_get(server->nodestoreSwitch, &parentNodeId);
+    const UA_Node *parent = UA_NodestoreSwitch_getNode(server, &parentNodeId);
     if(!parent) {
         UA_RCU_UNLOCK();
         return UA_STATUSCODE_BADNODEIDINVALID;
     }
-    for(size_t i = 0; i < parent->referencesSize; ++i) {
-        UA_ReferenceNode *ref = &parent->references[i];
+
+    /* TODO: We need to do an ugly copy of the references array since users may
+     * delete references from within the callback. In single-threaded mode this
+     * changes the same node we point at here. In multi-threaded mode, this
+     * creates a new copy as nodes are truly immutable. */
+    UA_ReferenceNode *refs = NULL;
+    size_t refssize = parent->referencesSize;
+    UA_StatusCode retval = UA_Array_copy(parent->references, parent->referencesSize,
+                                         (void**)&refs, &UA_TYPES[UA_TYPES_REFERENCENODE]);
+    if(retval != UA_STATUSCODE_GOOD) {
+        UA_RCU_UNLOCK();
+        return retval;
+    }
+
+    for(size_t i = parent->referencesSize; i > 0; --i) {
+        UA_ReferenceNode *ref = &refs[i-1];
         retval |= callback(ref->targetId.nodeId, ref->isInverse,
                            ref->referenceTypeId, handle);
     }
-    UA_NodestoreSwitch_release(server->nodestoreSwitch, parent);
+    UA_NodestoreSwitch_releaseNode(server, parent);
     UA_RCU_UNLOCK();
+
+    UA_Array_delete(refs, refssize, &UA_TYPES[UA_TYPES_REFERENCENODE]);
     return retval;
 }
 
@@ -250,8 +406,11 @@ void UA_Server_delete(UA_Server *server) {
     UA_SecureChannelManager_deleteMembers(&server->secureChannelManager);
     UA_SessionManager_deleteMembers(&server->sessionManager);
     UA_RCU_LOCK();
-    //delete all other nodestores
-    UA_NodestoreSwitch_delete(server->nodestoreSwitch);
+    //delete all namespaces and nodestores
+    for(size_t i = 0; i<server->namespacesSize; ++i){
+        UA_Namespace_deleteMembers(&server->namespaces[i]);
+    }
+    UA_free(server->namespaces);
     //Delete the standard nodestore
     UA_Nodestore_standard_delete(server->nodestore_std);
     UA_RCU_UNLOCK();
@@ -259,7 +418,6 @@ void UA_Server_delete(UA_Server *server) {
 #ifdef UA_ENABLE_EXTERNAL_NAMESPACES
     UA_Server_deleteExternalNamespaces(server);
 #endif
-    UA_Array_delete(server->namespaces, server->namespacesSize, &UA_TYPES[UA_TYPES_STRING]);
     UA_Array_delete(server->endpointDescriptions, server->endpointDescriptionsSize,
                     &UA_TYPES[UA_TYPES_ENDPOINTDESCRIPTION]);
 
@@ -274,6 +432,7 @@ void UA_Server_delete(UA_Server *server) {
 
 #ifdef UA_ENABLE_MULTITHREADING
     pthread_cond_destroy(&server->dispatchQueue_condition);
+    pthread_mutex_destroy(&server->dispatchQueue_mutex);
 #endif
     UA_free(server);
 }
@@ -377,53 +536,21 @@ readNamespaces(void *handle, const UA_NodeId nodeid, UA_Boolean sourceTimestamp,
         return UA_STATUSCODE_GOOD;
     }
     UA_Server *server = (UA_Server*)handle;
-    UA_StatusCode retval;
-    retval = UA_Variant_setArrayCopy(&value->value, server->namespaces,
-                                     server->namespacesSize, &UA_TYPES[UA_TYPES_STRING]);
-    if(retval != UA_STATUSCODE_GOOD)
-        return retval;
+    //Copy namespace array in UA_String array
+    UA_String* namespacesArray = (UA_String*)UA_malloc(sizeof(UA_String) *server->namespacesSize);
+    if(!namespacesArray)
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    for(size_t i = 0; i < server->namespacesSize; ++i){
+        namespacesArray[i] = server->namespaces[i].uri;
+    }
+    UA_Variant_setArrayCopy(&value->value, namespacesArray,
+            server->namespacesSize, &UA_TYPES[UA_TYPES_STRING]);
+    UA_free(namespacesArray);
     value->hasValue = true;
     if(sourceTimestamp) {
         value->hasSourceTimestamp = true;
         value->sourceTimestamp = UA_DateTime_now();
     }
-    return UA_STATUSCODE_GOOD;
-}
-
-static UA_StatusCode
-writeNamespaces(void *handle, const UA_NodeId nodeid, const UA_Variant *data,
-                const UA_NumericRange *range) {
-    UA_Server *server = (UA_Server*)handle;
-
-    /* Check the data type */
-    if(data->type != &UA_TYPES[UA_TYPES_STRING])
-        return UA_STATUSCODE_BADTYPEMISMATCH;
-
-    /* Check that the variant is not empty */
-    if(!data->data)
-        return UA_STATUSCODE_BADTYPEMISMATCH;
-
-    /* TODO: Writing with a range is not implemented */
-    if(range)
-        return UA_STATUSCODE_BADINTERNALERROR;
-
-    UA_String *newNamespaces = data->data;
-    size_t newNamespacesSize = data->arrayLength;
-
-    /* Test if we append to the existing namespaces */
-    if(newNamespacesSize <= server->namespacesSize)
-        return UA_STATUSCODE_BADTYPEMISMATCH;
-
-    /* Test if the existing namespaces are unchanged */
-    for(size_t i = 0; i < server->namespacesSize; ++i) {
-        if(!UA_String_equal(&server->namespaces[i], &newNamespaces[i]))
-            return UA_STATUSCODE_BADINTERNALERROR;
-    }
-
-    /* Add namespaces */
-    for(size_t i = server->namespacesSize; i < newNamespacesSize; ++i)
-        addNamespace(server, newNamespaces[i]);
-
     return UA_STATUSCODE_GOOD;
 }
 
@@ -448,14 +575,14 @@ readCurrentTime(void *handle, const UA_NodeId nodeid, UA_Boolean sourceTimeStamp
     return UA_STATUSCODE_GOOD;
 }
 
-static void copyNames(UA_Node *node, char *name) {
+static void copyNames(UA_Node *node, const char *name) {
     node->browseName = UA_QUALIFIEDNAME_ALLOC(0, name);
     node->displayName = UA_LOCALIZEDTEXT_ALLOC("en_US", name);
     node->description = UA_LOCALIZEDTEXT_ALLOC("en_US", name);
 }
 
 static void
-addDataTypeNode(UA_Server *server, char* name, UA_UInt32 datatypeid,
+addDataTypeNode(UA_Server *server, const char* name, UA_UInt32 datatypeid,
                 UA_Boolean isAbstract, UA_UInt32 parent) {
     UA_DataTypeNode *datatype = UA_Nodestore_newDataTypeNode();
     copyNames((UA_Node*)datatype, name);
@@ -466,7 +593,7 @@ addDataTypeNode(UA_Server *server, char* name, UA_UInt32 datatypeid,
 }
 
 static void
-addObjectTypeNode(UA_Server *server, char* name, UA_UInt32 objecttypeid,
+addObjectTypeNode(UA_Server *server, const char* name, UA_UInt32 objecttypeid,
                   UA_UInt32 parent, UA_UInt32 parentreference) {
     UA_ObjectTypeNode *objecttype =UA_Nodestore_newObjectTypeNode();
     copyNames((UA_Node*)objecttype, name);
@@ -476,7 +603,7 @@ addObjectTypeNode(UA_Server *server, char* name, UA_UInt32 objecttypeid,
 }
 
 static UA_VariableTypeNode*
-createVariableTypeNode(UA_Server *server, char* name, UA_UInt32 variabletypeid,
+createVariableTypeNode(UA_Server *server, const char* name, UA_UInt32 variabletypeid,
                        UA_Boolean abstract) {
     UA_VariableTypeNode *variabletype = UA_Nodestore_newVariableTypeNode();
     copyNames((UA_Node*)variabletype, name);
@@ -505,8 +632,8 @@ GetMonitoredItems(void *handle, const UA_NodeId *objectId,
     if(sizeOfOutput==0)
         return UA_STATUSCODE_GOOD;
 
-    UA_UInt32* clientHandles = UA_Array_new(sizeOfOutput, &UA_TYPES[UA_TYPES_UINT32]);
-    UA_UInt32* serverHandles = UA_Array_new(sizeOfOutput, &UA_TYPES[UA_TYPES_UINT32]);
+    UA_UInt32* clientHandles = (UA_UInt32 *)UA_Array_new(sizeOfOutput, &UA_TYPES[UA_TYPES_UINT32]);
+    UA_UInt32* serverHandles = (UA_UInt32 *)UA_Array_new(sizeOfOutput, &UA_TYPES[UA_TYPES_UINT32]);
     UA_UInt32 i = 0;
     LIST_FOREACH(monitoredItem, &subscription->monitoredItems, listEntry) {
         clientHandles[i] = monitoredItem->clientHandle;
@@ -520,7 +647,7 @@ GetMonitoredItems(void *handle, const UA_NodeId *objectId,
 #endif
 
 UA_Server * UA_Server_new(const UA_ServerConfig config) {
-    UA_Server *server = UA_calloc(1, sizeof(UA_Server));
+    UA_Server *server = (UA_Server *)UA_calloc(1, sizeof(UA_Server));
     if(!server)
         return NULL;
 
@@ -538,31 +665,30 @@ UA_Server * UA_Server_new(const UA_ServerConfig config) {
 #ifndef UA_ENABLE_DETERMINISTIC_RNG
     UA_random_seed((UA_UInt64)UA_DateTime_now());
 #endif
-
-    /* ns0 and ns1 */
-    server->nodestoreSwitch = UA_NodestoreSwitch_new();
-    server->namespaces = UA_Array_new(2, &UA_TYPES[UA_TYPES_STRING]);
-    server->namespacesSize = 0;
-    //Handle default nodeStoreInterfaces
-    server->nodestore_std = UA_malloc(sizeof(UA_NodestoreInterface));
+    //Initialize a default nodeStoreInterface for namespaces
+    server->nodestore_std = (UA_NodestoreInterface*)UA_malloc(sizeof(UA_NodestoreInterface));
     *server->nodestore_std = UA_Nodestore_standard();
+    /* Namespace0 and Namespace1 initialization*/
+    //TODO move to UA_ServerConfig_standard as namespace array of size2
+    UA_Namespace *ns0 = UA_Namespace_newFromChar("http://opcfoundation.org/UA/");
+    ns0->dataTypes = UA_TYPES;
+    ns0->dataTypesSize = UA_TYPES_COUNT;
+    UA_Server_addNamespace_full(server, ns0);
+    UA_Namespace_deleteMembers(ns0);
+    UA_free(ns0);
 
-    //Hacky way of converting UA_String to Char*
-    //--> Maybe easier to overload addNamespace with UA_String parameter
-    UA_Byte* applicationUriStr = UA_malloc(
-            config.applicationDescription.applicationUri.length + 1);
-    memcpy(applicationUriStr, config.applicationDescription.applicationUri.data,
-            config.applicationDescription.applicationUri.length);
-    applicationUriStr[config.applicationDescription.applicationUri.length] ='\0';
-    //Add NS0 and NS1
-    UA_Server_addNamespace_Nodestore(server, "http://opcfoundation.org/UA/",
-            (config.nodestore0 != NULL) ? config.nodestore0 : server->nodestore_std);
-    UA_Server_addNamespace_Nodestore(server, (char *) applicationUriStr,
-            (config.nodestore1 != NULL) ? config.nodestore1 : server->nodestore_std);
-    UA_free(applicationUriStr);
+    UA_Namespace *ns1 = UA_Namespace_new(&config.applicationDescription.applicationUri);
+    UA_Server_addNamespace_full(server, ns1);
+    UA_Namespace_deleteMembers(ns1);
+    UA_free(ns1);
+    /* Custom configuration of Namespaces at beginning*/
+    for(size_t i = 0 ; i < config.namespacesSize ; ++i){
+
+        UA_Server_addNamespace_full(server, &config.namespaces[i]);
+    }
 
     /* Create endpoints w/o endpointurl. It is added from the networklayers at startup */
-    server->endpointDescriptions = UA_Array_new(server->config.networkLayersSize,
+    server->endpointDescriptions = (UA_EndpointDescription *)UA_Array_new(server->config.networkLayersSize,
                                                 &UA_TYPES[UA_TYPES_ENDPOINTDESCRIPTION]);
     server->endpointDescriptionsSize = server->config.networkLayersSize;
     for(size_t i = 0; i < server->config.networkLayersSize; ++i) {
@@ -579,7 +705,7 @@ UA_Server * UA_Server_new(const UA_ServerConfig config) {
         if(server->config.accessControl.enableUsernamePasswordLogin)
             ++policies;
         endpoint->userIdentityTokensSize = policies;
-        endpoint->userIdentityTokens = UA_Array_new(policies, &UA_TYPES[UA_TYPES_USERTOKENPOLICY]);
+        endpoint->userIdentityTokens = (UA_UserTokenPolicy *)UA_Array_new(policies, &UA_TYPES[UA_TYPES_USERTOKENPOLICY]);
 
         size_t currentIndex = 0;
         if(server->config.accessControl.enableAnonymousLogin) {
@@ -607,8 +733,10 @@ UA_Server * UA_Server_new(const UA_ServerConfig config) {
     UA_SecureChannelManager_init(&server->secureChannelManager, server);
     UA_SessionManager_init(&server->sessionManager, server);
 
-    UA_Job cleanup = {.type = UA_JOBTYPE_METHODCALL,
-                      .job.methodCall = {.method = UA_Server_cleanup, .data = NULL} };
+   UA_Job cleanup;
+   cleanup.type = UA_JOBTYPE_METHODCALL; 
+   cleanup.job.methodCall.data = NULL;
+   cleanup.job.methodCall.method = UA_Server_cleanup;
     UA_Server_addRepeatedJob(server, cleanup, 10000, NULL);
 
 #ifdef UA_ENABLE_DISCOVERY
@@ -621,13 +749,6 @@ UA_Server * UA_Server_new(const UA_ServerConfig config) {
 
 #ifdef UA_ENABLE_LOAD_NAMESPACE0
 #ifndef UA_ENABLE_GENERATE_NAMESPACE0
-
-    UA_NodeId referenceTypesFolderId = UA_NODEID_NUMERIC(0,UA_NS0ID_REFERENCETYPESFOLDER);
-    UA_NodeId hasChildId = UA_NODEID_NUMERIC(0,UA_NS0ID_HASCHILD);
-    UA_NodeId dataTypesFolderId = UA_NODEID_NUMERIC(0,UA_NS0ID_DATATYPESFOLDER);
-    UA_NodeId variableTypesFolderId = UA_NODEID_NUMERIC(0,UA_NS0ID_VARIABLETYPESFOLDER);
-    UA_NodeId objectTypesFolderId = UA_NODEID_NUMERIC(0,UA_NS0ID_OBJECTTYPESFOLDER);
-    UA_NodeId rootFolderId = UA_NODEID_NUMERIC(0,UA_NS0ID_ROOTFOLDER);
 
     /*********************************/
     /* Bootstrap reference hierarchy */
@@ -648,10 +769,8 @@ UA_Server * UA_Server_new(const UA_ServerConfig config) {
     hassubtype->symmetric = false;
 
     UA_RCU_LOCK();
-    UA_NodestoreSwitch_insert(server->nodestoreSwitch, (UA_Node*)references,
-            &referenceTypesFolderId, NULL);
-    UA_NodestoreSwitch_insert(server->nodestoreSwitch, (UA_Node*)hassubtype,
-            &hasChildId, NULL);
+    UA_NodestoreSwitch_insertNode(server, (UA_Node*)references, NULL);
+    UA_NodestoreSwitch_insertNode(server, (UA_Node*)hassubtype, NULL);
     UA_RCU_UNLOCK();
 
     UA_ReferenceTypeNode *hierarchicalreferences = UA_Nodestore_newReferenceTypeNode();
@@ -838,8 +957,7 @@ UA_Server * UA_Server_new(const UA_ServerConfig config) {
     basedatatype->nodeId.identifier.numeric = UA_NS0ID_BASEDATATYPE;
     basedatatype->isAbstract = true;
     UA_RCU_LOCK();
-    UA_NodestoreSwitch_insert(server->nodestoreSwitch, (UA_Node*)basedatatype,
-            &dataTypesFolderId, NULL);
+    UA_NodestoreSwitch_insertNode(server, (UA_Node*)basedatatype, NULL);
     UA_RCU_UNLOCK();
 
     addDataTypeNode(server, "Boolean", UA_NS0ID_BOOLEAN, false, UA_NS0ID_BASEDATATYPE);
@@ -883,8 +1001,7 @@ UA_Server * UA_Server_new(const UA_ServerConfig config) {
     basevartype->valueRank = -2;
     basevartype->dataType = UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATATYPE);
     UA_RCU_LOCK();
-    UA_NodestoreSwitch_insert(server->nodestoreSwitch, (UA_Node*)basevartype,
-            &variableTypesFolderId, NULL);
+    UA_NodestoreSwitch_insertNode(server, (UA_Node*)basevartype, NULL);
     UA_RCU_UNLOCK();
 
     UA_VariableTypeNode *basedatavartype =
@@ -927,8 +1044,7 @@ UA_Server * UA_Server_new(const UA_ServerConfig config) {
     copyNames((UA_Node*)baseobjtype, "BaseObjectType");
     baseobjtype->nodeId.identifier.numeric = UA_NS0ID_BASEOBJECTTYPE;
     UA_RCU_LOCK();
-    UA_NodestoreSwitch_insert(server->nodestoreSwitch, (UA_Node*)baseobjtype,
-            &objectTypesFolderId, NULL);
+    UA_NodestoreSwitch_insertNode(server, (UA_Node*)baseobjtype, NULL);
     UA_RCU_UNLOCK();
 
     addObjectTypeNode(server, "FolderType", UA_NS0ID_FOLDERTYPE,
@@ -943,20 +1059,13 @@ UA_Server * UA_Server_new(const UA_ServerConfig config) {
     /******************/
     /* Root and below */
     /******************/
-
-    static const UA_NodeId nodeIdFolderType = {
-        .namespaceIndex = 0, .identifierType = UA_NODEIDTYPE_NUMERIC,
-        .identifier.numeric = UA_NS0ID_FOLDERTYPE};
-    static const UA_NodeId nodeIdHasTypeDefinition = {
-        .namespaceIndex = 0, .identifierType = UA_NODEIDTYPE_NUMERIC,
-        .identifier.numeric = UA_NS0ID_HASTYPEDEFINITION};
-
+    const UA_NodeId nodeIdFolderType = UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE);
+    const UA_NodeId nodeIdHasTypeDefinition = UA_NODEID_NUMERIC(0, UA_NS0ID_HASTYPEDEFINITION);
     UA_ObjectNode *root = UA_Nodestore_newObjectNode();
     copyNames((UA_Node*)root, "Root");
     root->nodeId.identifier.numeric = UA_NS0ID_ROOTFOLDER;
     UA_RCU_LOCK();
-    UA_NodestoreSwitch_insert(server->nodestoreSwitch, (UA_Node*)root,
-           &rootFolderId, NULL);
+    UA_NodestoreSwitch_insertNode(server, (UA_Node*)root,NULL);
     UA_RCU_UNLOCK();
     addReferenceInternal(server, UA_NODEID_NUMERIC(0, UA_NS0ID_ROOTFOLDER), nodeIdHasTypeDefinition,
                          UA_EXPANDEDNODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE), true);
@@ -1044,8 +1153,9 @@ UA_Server * UA_Server_new(const UA_ServerConfig config) {
     copyNames((UA_Node*)namespaceArray, "NamespaceArray");
     namespaceArray->nodeId.identifier.numeric = UA_NS0ID_SERVER_NAMESPACEARRAY;
     namespaceArray->valueSource = UA_VALUESOURCE_DATASOURCE;
-    namespaceArray->value.dataSource = (UA_DataSource) {.handle = server, .read = readNamespaces,
-                                                        .write = writeNamespaces};
+    namespaceArray->value.dataSource.handle = server;
+    namespaceArray->value.dataSource.read = readNamespaces;
+    namespaceArray->value.dataSource.write = writeNamespaces;
     namespaceArray->dataType = UA_TYPES[UA_TYPES_STRING].typeId;
     namespaceArray->valueRank = 1;
     namespaceArray->minimumSamplingInterval = 1.0;
@@ -1207,8 +1317,9 @@ UA_Server * UA_Server_new(const UA_ServerConfig config) {
     copyNames((UA_Node*)serverstatus, "ServerStatus");
     serverstatus->nodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERSTATUS);
     serverstatus->valueSource = UA_VALUESOURCE_DATASOURCE;
-    serverstatus->value.dataSource = (UA_DataSource) {.handle = server, .read = readStatus,
-                                                      .write = NULL};
+    serverstatus->value.dataSource.handle = server;
+    serverstatus->value.dataSource.read = readStatus;
+    serverstatus->value.dataSource.write = NULL;
     addNodeInternalWithType(server, (UA_Node*)serverstatus, UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER),
                             nodeIdHasComponent, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE));
 
@@ -1226,8 +1337,9 @@ UA_Server * UA_Server_new(const UA_ServerConfig config) {
     copyNames((UA_Node*)currenttime, "CurrentTime");
     currenttime->nodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERSTATUS_CURRENTTIME);
     currenttime->valueSource = UA_VALUESOURCE_DATASOURCE;
-    currenttime->value.dataSource = (UA_DataSource) {.handle = NULL, .read = readCurrentTime,
-                                                     .write = NULL};
+    currenttime->value.dataSource.handle = NULL;
+    currenttime->value.dataSource.read = readCurrentTime;
+    currenttime->value.dataSource.write = NULL;
     addNodeInternalWithType(server, (UA_Node*)currenttime,
                             UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERSTATUS),
                             nodeIdHasComponent, UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE));
@@ -1337,8 +1449,9 @@ UA_Server * UA_Server_new(const UA_ServerConfig config) {
     copyNames((UA_Node*)servicelevel, "ServiceLevel");
     servicelevel->nodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVICELEVEL);
     servicelevel->valueSource = UA_VALUESOURCE_DATASOURCE;
-    servicelevel->value.dataSource = (UA_DataSource) {.handle = server, .read = readServiceLevel,
-                                                      .write = NULL};
+    servicelevel->value.dataSource.handle = server;
+    servicelevel->value.dataSource.read = readServiceLevel;
+    servicelevel->value.dataSource.write = NULL;
     addNodeInternalWithType(server, (UA_Node*)servicelevel,
                             UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER), nodeIdHasComponent,
                             UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE));
@@ -1347,7 +1460,9 @@ UA_Server * UA_Server_new(const UA_ServerConfig config) {
     copyNames((UA_Node*)auditing, "Auditing");
     auditing->nodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_AUDITING);
     auditing->valueSource = UA_VALUESOURCE_DATASOURCE;
-    auditing->value.dataSource = (UA_DataSource) {.handle = server, .read = readAuditing, .write = NULL};
+    auditing->value.dataSource.handle = server;
+    auditing->value.dataSource.read = readAuditing;
+    auditing->value.dataSource.write = NULL;
     addNodeInternalWithType(server, (UA_Node*)auditing,
                             UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER), nodeIdHasComponent,
                             UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE));
@@ -1423,7 +1538,11 @@ UA_Server * UA_Server_new(const UA_ServerConfig config) {
 }
 
 #ifdef UA_ENABLE_DISCOVERY
-static UA_StatusCode register_server_with_discovery_server(UA_Server *server, const char* discoveryServerUrl, const UA_Boolean isUnregister, const char* semaphoreFilePath) {
+static UA_StatusCode
+register_server_with_discovery_server(UA_Server *server, const char* discoveryServerUrl,
+                                      const UA_Boolean isUnregister,
+                                      const char* semaphoreFilePath) {
+    /* Create the client */
     UA_Client *client = UA_Client_new(UA_ClientConfig_standard);
     UA_StatusCode retval = UA_Client_connect(client, discoveryServerUrl);
     if(retval != UA_STATUSCODE_GOOD) {
@@ -1431,101 +1550,72 @@ static UA_StatusCode register_server_with_discovery_server(UA_Server *server, co
         return retval;
     }
 
+    /* Prepare the request. Do not cleanup the request after the service call,
+     * as the members are stack-allocated or point into the server config. */
+    /* TODO: where do we get the discoveryProfileUri for application data? */
     UA_RegisterServerRequest request;
     UA_RegisterServerRequest_init(&request);
-
     request.requestHeader.timestamp = UA_DateTime_now();
     request.requestHeader.timeoutHint = 10000;
 
     request.server.isOnline = !isUnregister;
-
-    // copy all the required data from applicationDescription to request
-    retval |= UA_String_copy(&server->config.applicationDescription.applicationUri, &request.server.serverUri);
-    retval |= UA_String_copy(&server->config.applicationDescription.productUri, &request.server.productUri);
-
-    request.server.serverNamesSize = 1;
-    request.server.serverNames = UA_malloc(sizeof(UA_LocalizedText));
-    if (!request.server.serverNames) {
-        UA_Client_disconnect(client);
-        UA_Client_delete(client);
-        return UA_STATUSCODE_BADOUTOFMEMORY;
-    }
-    retval |= UA_LocalizedText_copy(&server->config.applicationDescription.applicationName, &request.server.serverNames[0]);
-    
+    request.server.serverUri = server->config.applicationDescription.applicationUri;
+    request.server.productUri = server->config.applicationDescription.productUri;
     request.server.serverType = server->config.applicationDescription.applicationType;
-    retval |= UA_String_copy(&server->config.applicationDescription.gatewayServerUri, &request.server.gatewayServerUri);
-    // TODO where do we get the discoveryProfileUri for application data?
+    request.server.gatewayServerUri = server->config.applicationDescription.gatewayServerUri;
 
-    request.server.discoveryUrls = UA_malloc(sizeof(UA_String) * server->config.applicationDescription.discoveryUrlsSize);
-    if (!request.server.serverNames) {
-        UA_RegisteredServer_deleteMembers(&request.server);
-        UA_Client_disconnect(client);
-        UA_Client_delete(client);
-        return UA_STATUSCODE_BADOUTOFMEMORY;
-    }
+    if(semaphoreFilePath)
+        request.server.semaphoreFilePath = UA_STRING((char*)(uintptr_t)semaphoreFilePath); /* dirty cast */
 
-    for (size_t i = 0; i<server->config.applicationDescription.discoveryUrlsSize; i++) {
-        retval |= UA_String_copy(&server->config.applicationDescription.discoveryUrls[i], &request.server.discoveryUrls[i]);
-    }
-    if(retval != UA_STATUSCODE_GOOD) {
-        UA_RegisteredServer_deleteMembers(&request.server);
-        UA_Client_disconnect(client);
-        UA_Client_delete(client);
-        return UA_STATUSCODE_BADOUTOFMEMORY;
-    }
+    request.server.serverNames = &server->config.applicationDescription.applicationName;
+    request.server.serverNamesSize = 1;
 
-    /* add the discoveryUrls from the networklayers */
-    UA_String *disc = UA_realloc(request.server.discoveryUrls,
-                                 sizeof(UA_String) * (request.server.discoveryUrlsSize + server->config.networkLayersSize));
-    if(!disc) {
-        UA_RegisteredServer_deleteMembers(&request.server);
-        UA_Client_disconnect(client);
-        UA_Client_delete(client);
-        return UA_STATUSCODE_BADOUTOFMEMORY;
-    }
-    size_t existing = request.server.discoveryUrlsSize;
-    request.server.discoveryUrls = disc;
-    request.server.discoveryUrlsSize += server->config.networkLayersSize;
+    /* Copy the discovery urls from the server config and the network layers*/
+    size_t config_discurls = server->config.applicationDescription.discoveryUrlsSize;
+    size_t nl_discurls = server->config.networkLayersSize;
+    request.server.discoveryUrls = (UA_String*)UA_alloca(sizeof(UA_String) * (config_discurls + nl_discurls));
+    request.server.discoveryUrlsSize = config_discurls + nl_discurls;
 
-    // TODO: Add nl only if discoveryUrl not already present
-    for(size_t i = 0; i < server->config.networkLayersSize; i++) {
+    for(size_t i = 0; i < config_discurls; ++i)
+        request.server.discoveryUrls[i] = server->config.applicationDescription.discoveryUrls[i];
+
+    /* TODO: Add nl only if discoveryUrl not already present */
+    for(size_t i = 0; i < nl_discurls; ++i) {
         UA_ServerNetworkLayer *nl = &server->config.networkLayers[i];
-        UA_String_copy(&nl->discoveryUrl, &request.server.discoveryUrls[existing + i]);
+        request.server.discoveryUrls[config_discurls + i] = nl->discoveryUrl;
     }
 
-    if (semaphoreFilePath) {
-        request.server.semaphoreFilePath = UA_String_fromChars(semaphoreFilePath);
-    }
-
-    // now send the request
+    /* Call the service */
     UA_RegisterServerResponse response;
     UA_RegisterServerResponse_init(&response);
     __UA_Client_Service(client, &request, &UA_TYPES[UA_TYPES_REGISTERSERVERREQUEST],
                         &response, &UA_TYPES[UA_TYPES_REGISTERSERVERRESPONSE]);
 
-    UA_RegisterServerRequest_deleteMembers(&request);
+    /* Test the result and log on error */
+    retval = response.responseHeader.serviceResult;
+    if(retval != UA_STATUSCODE_GOOD)
+        UA_LOG_INFO(server->config.logger, UA_LOGCATEGORY_CLIENT,
+                    "RegisterServer failed with statuscode %s",
+                    UA_StatusCode_name(response.responseHeader.serviceResult));
 
-    if(response.responseHeader.serviceResult != UA_STATUSCODE_GOOD) {
-        UA_LOG_ERROR(server->config.logger, UA_LOGCATEGORY_CLIENT,
-                     "RegisterServer failed with statuscode 0x%08x", response.responseHeader.serviceResult);
-        UA_RegisterServerResponse_deleteMembers(&response);
-        UA_Client_disconnect(client);
-        UA_Client_delete(client);
-        return response.responseHeader.serviceResult;
-    }
-
-
+    /* Cleanup */
+    UA_RegisterServerResponse_deleteMembers(&response);
     UA_Client_disconnect(client);
     UA_Client_delete(client);
-
-    return UA_STATUSCODE_GOOD;
+    return retval;
 }
 
-UA_StatusCode UA_Server_register_discovery(UA_Server *server, const char* discoveryServerUrl, const char* semaphoreFilePath) {
-    return register_server_with_discovery_server(server, discoveryServerUrl, UA_FALSE, semaphoreFilePath);
+UA_StatusCode
+UA_Server_register_discovery(UA_Server *server, const char* discoveryServerUrl,
+                             const char* semaphoreFilePath) {
+    return register_server_with_discovery_server(server, discoveryServerUrl,
+                                                 UA_FALSE, semaphoreFilePath);
 }
 
-UA_StatusCode UA_Server_unregister_discovery(UA_Server *server, const char* discoveryServerUrl) {
-    return register_server_with_discovery_server(server, discoveryServerUrl, UA_TRUE, NULL);
+UA_StatusCode
+UA_Server_unregister_discovery(UA_Server *server, const char* discoveryServerUrl) {
+    return register_server_with_discovery_server(server, discoveryServerUrl,
+                                                 UA_TRUE, NULL);
 }
+
 #endif

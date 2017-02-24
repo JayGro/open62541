@@ -2,16 +2,7 @@
  * See http://creativecommons.org/publicdomain/zero/1.0/ for more information. */
 
 #include <signal.h>
-
-#ifdef UA_NO_AMALGAMATION
-# include "ua_types.h"
-# include "ua_server.h"
-# include "ua_config_standard.h"
-# include "ua_network_tcp.h"
-# include "ua_log_stdout.h"
-#else
-# include "open62541.h"
-#endif
+#include "open62541.h"
 
 UA_Boolean running = true;
 UA_Logger logger = UA_Log_Stdout;
@@ -35,8 +26,10 @@ int main(int argc, char** argv) {
     UA_Server *server = UA_Server_new(config);
 
     /* add a repeated job to the server */
-    UA_Job job = {.type = UA_JOBTYPE_METHODCALL,
-                  .job.methodCall = {.method = testCallback, .data = NULL} };
+    UA_Job job;
+    job.type = UA_JOBTYPE_METHODCALL;
+    job.job.methodCall.data = NULL;
+    job.job.methodCall.method = testCallback;
     UA_Server_addRepeatedJob(server, job, 2000, NULL); // call every 2 sec
 
     UA_StatusCode retval = UA_Server_run(server, &running);

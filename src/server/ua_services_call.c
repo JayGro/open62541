@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "ua_services.h"
 #include "ua_server_internal.h"
 
@@ -11,16 +15,16 @@ getArgumentsVariableNode(UA_Server *server, const UA_MethodNode *ofMethod,
         if(ofMethod->references[i].isInverse == false &&
             UA_NodeId_equal(&hasProperty, &ofMethod->references[i].referenceTypeId)) {
             const UA_Node *refTarget =
-               UA_NodestoreSwitch_get(server->nodestoreSwitch, &ofMethod->references[i].targetId.nodeId);
+               UA_NodestoreSwitch_getNode(server, &ofMethod->references[i].targetId.nodeId);
             if(!refTarget)
                 continue;
             if(refTarget->nodeClass == UA_NODECLASS_VARIABLE &&
                 refTarget->browseName.namespaceIndex == 0 &&
                 UA_String_equal(&withBrowseName, &refTarget->browseName.name)) {
-                UA_NodestoreSwitch_release(server->nodestoreSwitch, refTarget);
+                UA_NodestoreSwitch_releaseNode(server, refTarget);
                 return (const UA_VariableNode*) refTarget;
             }
-            UA_NodestoreSwitch_release(server->nodestoreSwitch, refTarget);
+            UA_NodestoreSwitch_releaseNode(server, refTarget);
         }
     }
     return NULL;
@@ -46,7 +50,7 @@ argumentsConformsToDefinition(UA_Server *server, const UA_VariableNode *argRequi
     for(size_t i = 0; i < argReqsSize; ++i)
         retval |= typeCheckValue(server, &argReqs[i].dataType, argReqs[i].valueRank,
                                  argReqs[i].arrayDimensionsSize, argReqs[i].arrayDimensions,
-                                 &args[i], NULL, args);
+                                 &args[i], NULL, &args[i]);
     return retval;
 }
 
@@ -56,34 +60,34 @@ Service_Call_single(UA_Server *server, UA_Session *session,
                     UA_CallMethodResult *result) {
     /* Get/verify the method node */
     const UA_MethodNode *methodCalled =
-        (const UA_MethodNode*)UA_NodestoreSwitch_get(server->nodestoreSwitch, &request->methodId);
+        (const UA_MethodNode*)UA_NodestoreSwitch_getNode(server, &request->methodId);
     if(!methodCalled) {
         result->statusCode = UA_STATUSCODE_BADMETHODINVALID;
         return;
     }
     if(methodCalled->nodeClass != UA_NODECLASS_METHOD) {
         result->statusCode = UA_STATUSCODE_BADNODECLASSINVALID;
-        UA_NodestoreSwitch_release(server->nodestoreSwitch,(const UA_Node*) methodCalled);
+        UA_NodestoreSwitch_releaseNode(server,(const UA_Node*) methodCalled);
         return;
     }
     if(!methodCalled->attachedMethod) {
         result->statusCode = UA_STATUSCODE_BADINTERNALERROR;
-        UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)methodCalled);
+        UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)methodCalled);
         return;
     }
 
     /* Get/verify the object node */
     const UA_ObjectNode *withObject =
-        (const UA_ObjectNode*)UA_NodestoreSwitch_get(server->nodestoreSwitch, &request->objectId);
+        (const UA_ObjectNode*)UA_NodestoreSwitch_getNode(server, &request->objectId);
     if(!withObject) {
         result->statusCode = UA_STATUSCODE_BADNODEIDINVALID;
-        UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)methodCalled);
+        UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)methodCalled);
         return;
     }
     if(withObject->nodeClass != UA_NODECLASS_OBJECT && withObject->nodeClass != UA_NODECLASS_OBJECTTYPE) {
         result->statusCode = UA_STATUSCODE_BADNODECLASSINVALID;
-        UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)methodCalled);
-        UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)withObject);
+        UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)methodCalled);
+        UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)withObject);
         return;
     }
 
@@ -95,8 +99,8 @@ Service_Call_single(UA_Server *server, UA_Session *session,
                                                                    &request->objectId, &request->methodId);
     if(!executable) {
         result->statusCode = UA_STATUSCODE_BADNOTWRITABLE; // There is no NOTEXECUTABLE?
-        UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)methodCalled);
-        UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)withObject);
+        UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)methodCalled);
+        UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)withObject);
         return;
     }
 
@@ -110,7 +114,7 @@ Service_Call_single(UA_Server *server, UA_Session *session,
     for(size_t i = 0; i < methodCalled->referencesSize; ++i) {
         if(methodCalled->references[i].isInverse &&
            UA_NodeId_equal(&methodCalled->references[i].targetId.nodeId, &withObject->nodeId)) {
-            found = isNodeInTree(server->nodestoreSwitch, &methodCalled->references[i].referenceTypeId,
+            found = isNodeInTree(server, &methodCalled->references[i].referenceTypeId,
                                  &hasComponentNodeId, &hasSubTypeNodeId, 1);
             if(found)
                 break;
@@ -118,8 +122,8 @@ Service_Call_single(UA_Server *server, UA_Session *session,
     }
     if(!found) {
         result->statusCode = UA_STATUSCODE_BADMETHODINVALID;
-        UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)methodCalled);
-        UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)withObject);
+        UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)methodCalled);
+        UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)withObject);
         return;
     }
 
@@ -130,8 +134,8 @@ Service_Call_single(UA_Server *server, UA_Session *session,
     if(!inputArguments) {
         if(request->inputArgumentsSize > 0) {
             result->statusCode = UA_STATUSCODE_BADINVALIDARGUMENT;
-            UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)methodCalled);
-            UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)withObject);
+            UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)methodCalled);
+            UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)withObject);
             return;
         }
     } else {
@@ -139,8 +143,8 @@ Service_Call_single(UA_Server *server, UA_Session *session,
                                                            request->inputArgumentsSize,
                                                            request->inputArguments);
         if(result->statusCode != UA_STATUSCODE_GOOD){
-            UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)methodCalled);
-            UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)withObject);
+            UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)methodCalled);
+            UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)withObject);
             return;
         }
     }
@@ -150,12 +154,12 @@ Service_Call_single(UA_Server *server, UA_Session *session,
     const UA_VariableNode *outputArguments =
         getArgumentsVariableNode(server, methodCalled, UA_STRING("OutputArguments"));
     if(outputArguments) {
-        result->outputArguments = UA_Array_new(outputArguments->value.data.value.value.arrayLength,
+        result->outputArguments = (UA_Variant*)UA_Array_new(outputArguments->value.data.value.value.arrayLength,
                                                &UA_TYPES[UA_TYPES_VARIANT]);
         if(!result->outputArguments) {
             result->statusCode = UA_STATUSCODE_BADOUTOFMEMORY;
-            UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)methodCalled);
-            UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)withObject);
+            UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)methodCalled);
+            UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)withObject);
             return;
         }
         result->outputArgumentsSize = outputArguments->value.data.value.value.arrayLength;
@@ -172,8 +176,8 @@ Service_Call_single(UA_Server *server, UA_Session *session,
 #if defined(UA_ENABLE_METHODCALLS) && defined(UA_ENABLE_SUBSCRIPTIONS)
     methodCallSession = NULL;
 #endif
-    UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)methodCalled);
-    UA_NodestoreSwitch_release(server->nodestoreSwitch, (const UA_Node*)withObject);
+    UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)methodCalled);
+    UA_NodestoreSwitch_releaseNode(server, (const UA_Node*)withObject);
     /* TODO: Verify Output matches the argument definition */
 }
 
@@ -186,7 +190,7 @@ void Service_Call(UA_Server *server, UA_Session *session,
         return;
     }
 
-    response->results = UA_Array_new(request->methodsToCallSize, &UA_TYPES[UA_TYPES_CALLMETHODRESULT]);
+    response->results = (UA_CallMethodResult*)UA_Array_new(request->methodsToCallSize, &UA_TYPES[UA_TYPES_CALLMETHODRESULT]);
     if(!response->results) {
         response->responseHeader.serviceResult = UA_STATUSCODE_BADOUTOFMEMORY;
         return;
@@ -223,3 +227,4 @@ void Service_Call(UA_Server *server, UA_Session *session,
 }
 
 #endif /* UA_ENABLE_METHODCALLS */
+

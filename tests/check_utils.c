@@ -1,7 +1,12 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include <stdlib.h>
 
 #include "ua_types.h"
 #include "ua_client.h"
+#include "ua_util.h"
 #include "check.h"
 
 START_TEST(EndpointUrl_split) {
@@ -27,25 +32,25 @@ START_TEST(EndpointUrl_split) {
     ck_assert_uint_eq(UA_EndpointUrl_split("opc.tcp://", hostname, &port, &path), UA_STATUSCODE_GOOD);
     ck_assert_uint_eq(strlen(hostname), 0);
     ck_assert_uint_eq(port, 0);
-    ck_assert_ptr_eq(path, NULL);
+    ck_assert(path == NULL);
 
     // only hostname
     ck_assert_uint_eq(UA_EndpointUrl_split("opc.tcp://hostname", hostname, &port, &path), UA_STATUSCODE_GOOD);
     ck_assert_str_eq(hostname,"hostname");
     ck_assert_uint_eq(port, 0);
-    ck_assert_ptr_eq(path, NULL);
+    ck_assert(path == NULL);
 
     // empty port
     ck_assert_uint_eq(UA_EndpointUrl_split("opc.tcp://hostname:", hostname, &port, &path), UA_STATUSCODE_GOOD);
     ck_assert_str_eq(hostname,"hostname");
     ck_assert_uint_eq(port, 0);
-    ck_assert_ptr_eq(path, NULL);
+    ck_assert(path == NULL);
 
     // specific port
     ck_assert_uint_eq(UA_EndpointUrl_split("opc.tcp://hostname:1234", hostname, &port, &path), UA_STATUSCODE_GOOD);
     ck_assert_str_eq(hostname,"hostname");
     ck_assert_uint_eq(port, 1234);
-    ck_assert_ptr_eq(path, NULL);
+    ck_assert(path == NULL);
 
     // IPv6
     ck_assert_uint_eq(UA_EndpointUrl_split("opc.tcp://[2001:0db8:85a3::8a2e:0370:7334]:1234/path", hostname, &port, &path), UA_STATUSCODE_GOOD);
@@ -57,13 +62,13 @@ START_TEST(EndpointUrl_split) {
     ck_assert_uint_eq(UA_EndpointUrl_split("opc.tcp://:", hostname, &port, &path), UA_STATUSCODE_GOOD);
     ck_assert_uint_eq(strlen(hostname),0);
     ck_assert_uint_eq(port, 0);
-    ck_assert_ptr_eq(path, NULL);
+    ck_assert(path == NULL);
 
     // empty hostname and no port
     ck_assert_uint_eq(UA_EndpointUrl_split("opc.tcp:///", hostname, &port, &path), UA_STATUSCODE_GOOD);
     ck_assert_uint_eq(strlen(hostname),0);
     ck_assert_uint_eq(port, 0);
-    ck_assert_ptr_eq(path,0);
+    ck_assert(path == NULL);
 
     // overlength port
     ck_assert_uint_eq(UA_EndpointUrl_split("opc.tcp://hostname:12345678", hostname, &port, &path), UA_STATUSCODE_BADOUTOFRANGE);
@@ -78,7 +83,7 @@ START_TEST(EndpointUrl_split) {
     ck_assert_uint_eq(UA_EndpointUrl_split("opc.tcp://hostname/", hostname, &port, &path), UA_STATUSCODE_GOOD);
     ck_assert_str_eq(hostname,"hostname");
     ck_assert_uint_eq(port, 0);
-    ck_assert_ptr_eq(path, 0);
+    ck_assert(path == NULL);
 
     // port and path
     ck_assert_uint_eq(UA_EndpointUrl_split("opc.tcp://hostname:1234/path", hostname, &port, &path), UA_STATUSCODE_GOOD);
@@ -100,8 +105,6 @@ END_TEST
 
 START_TEST(readNumber) {
     UA_UInt32 result;
-    ck_assert_uint_eq(UA_readNumber(NULL, 0, NULL), 0);
-
     ck_assert_uint_eq(UA_readNumber((UA_Byte*)"x", 1, &result), 0);
 
     ck_assert_uint_eq(UA_readNumber((UA_Byte*)"1x", 2, &result), 1);
@@ -118,11 +121,11 @@ START_TEST(StatusCode_msg) {
     ck_assert_str_eq(UA_StatusCode_msg(UA_STATUSCODE_GOOD), "StatusCode descriptions not available");
     return;
 #endif
-		// first element in table
+        // first element in table
     ck_assert_str_eq(UA_StatusCode_explanation(UA_STATUSCODE_GOOD), "Success / No error");
     ck_assert_str_eq(UA_StatusCode_name(UA_STATUSCODE_GOOD), "Good");
 
-		// just some randomly picked status codes
+        // just some randomly picked status codes
     ck_assert_str_eq(UA_StatusCode_explanation(UA_STATUSCODE_BADNOCOMMUNICATION),
                      "Communication with the data source is defined");
     ck_assert_str_eq(UA_StatusCode_name(UA_STATUSCODE_BADNOCOMMUNICATION),
@@ -132,15 +135,15 @@ START_TEST(StatusCode_msg) {
                      "No data exists for the requested time range or event filter.");
     ck_assert_str_eq(UA_StatusCode_name(UA_STATUSCODE_GOODNODATA), "GoodNoData");
 
-		// last element in table
+        // last element in table
     ck_assert_str_eq(UA_StatusCode_explanation(UA_STATUSCODE_BADMAXCONNECTIONSREACHED),
                      "The operation could not be finished because all available connections are in use.");
     ck_assert_str_eq(UA_StatusCode_name(UA_STATUSCODE_BADMAXCONNECTIONSREACHED),
                      "BadMaxConnectionsReached");
 
-		// an invalid status code
-	ck_assert_str_eq(UA_StatusCode_explanation(0x80123456), "Unknown StatusCode");
-	ck_assert_str_eq(UA_StatusCode_name(0x80123456), "Unknown");
+        // an invalid status code
+    ck_assert_str_eq(UA_StatusCode_explanation(0x80123456), "Unknown StatusCode");
+    ck_assert_str_eq(UA_StatusCode_name(0x80123456), "Unknown");
 }
 END_TEST
 
