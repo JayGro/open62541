@@ -11,7 +11,7 @@
 # include "ua_network_tcp.h"
 # include "ua_log_stdout.h"
 #else
-# include "open62541.h"
+# include "../open62541.h"
 #endif
 
 /* files nodeset.h and nodeset.c are created from server_nodeset.xml in the /src_generated directory by CMake */

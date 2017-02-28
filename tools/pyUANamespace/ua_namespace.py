@@ -663,10 +663,10 @@ class opcua_namespace():
     header.append('#ifndef '+outfilename.upper()+'_H_')
     header.append('#define '+outfilename.upper()+'_H_')
     header.append('#ifdef UA_NO_AMALGAMATION')
-    #header.append(  '#include "server/ua_server_internal.h"')
+    header.append(  '#include "server/ua_server_internal.h"')
     header.append('  #include "ua_util.h"')
-    #header.append('  #include "ua_types.h"')
-    #header.append('  #include "ua_nodes.h"')
+    header.append('  #include "ua_types.h"')
+    header.append('  #include "ua_nodes.h"')
     header.append('  #include "ua_server.h"')
     header.append('  #include "ua_types_encoding_binary.h"')
     header.append('  #include "ua_types_generated_encoding_binary.h"')
@@ -753,7 +753,7 @@ UA_INLINE UA_StatusCode {0}_returnNamespaces(
           header = header + codegen.getNodeIdDefineString(n)
       if(n.nodeClass() == NODE_CLASS_REFERENCETYPE):
         code = code + n.printOpen62541CCode(unPrintedNodes, unPrintedRefs, supressGenerationOfAttribute=supressGenerationOfAttribute)
-    """
+
       # Now for the actual references...
       for r in n.getReferences():
         # Only print valid references in namespace 0 (users will not want their refs bootstrapped)

@@ -20,7 +20,7 @@ ccmake .
 - UA_BUILD_EXAMPLES OFF
 make
 ccmake .
-- UA_BUILD_EXAMPLES OFF
+- UA_BUILD_EXAMPLES ON
 make
 
 In build/openaas_generated/ finden sich die generierten Dateien.
