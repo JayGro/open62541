@@ -25,3 +25,5 @@ make
 
 In build/openaas_generated/ finden sich die generierten Dateien.
 Mit dem Beispiel examples/server_nodeset kann das Laden des Nodesets überprüft werden.
+
+Zur Generierung des open62541.c und .h files (mit NS0) wurde der commit 2ed2a9e0e642a2957e081a1bae927a469523f4f5 aus dem nodestore_switch Branch bei Julian genutzt.
